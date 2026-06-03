@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2 class="mb-4">Trade & Signal History</h2>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-dark text-white">
+        AI Signal Logs
+    </div>
+
+    <div class="card-body">
+        <table class="table table-striped">
+            <tr>
+                <th>Time</th>
+                <th>Symbol</th>
+                <th>Price</th>
+                <th>Signal</th>
+                <th>Confidence</th>
+                <th>Score</th>
+            </tr>
+
+            {% for s in signals %}
+            <tr>
+                <td>{{ s.created_at }}</td>
+                <td>{{ s.symbol }}</td>
+                <td>{{ s.price }}</td>
+                <td>{{ s.signal }}</td>
+                <td>{{ s.confidence }}%</td>
+                <td>{{ s.score }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-header bg-dark text-white">
+        Order Logs
+    </div>
+
+    <div class="card-body">
+        <table class="table table-striped">
+            <tr>
+                <th>Time</th>
+                <th>Symbol</th>
+                <th>Type</th>
+                <th>Qty</th>
+                <th>Status</th>
+                <th>Order ID</th>
+            </tr>
+
+            {% for o in orders %}
+            <tr>
+                <td>{{ o.created_at }}</td>
+                <td>{{ o.symbol }}</td>
+                <td>{{ o.transaction_type }}</td>
+                <td>{{ o.quantity }}</td>
+                <td>{{ o.status }}</td>
+                <td>{{ o.order_id }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+
+{% endblock %}

@@ -1,4 +1,5 @@
 from flask import Flask, request, render_template, session, redirect, url_for
+from flask_sqlalchemy import SQLAlchemy
 from kiteconnect import KiteConnect
 from dotenv import load_dotenv
 
@@ -7,16 +8,51 @@ import pandas as pd
 import ta
 import plotly.graph_objects as go
 from plotly.offline import plot
+from datetime import datetime
 
 load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY")
 
+database_url = os.getenv("DATABASE_URL")
+
+if database_url and database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+app.config["SQLALCHEMY_DATABASE_URI"] = database_url or "sqlite:///local.db"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+db = SQLAlchemy(app)
+
 api_key = os.getenv("KITE_API_KEY")
 api_secret = os.getenv("KITE_API_SECRET")
 
 kite = KiteConnect(api_key=api_key)
+
+
+class SignalLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    symbol = db.Column(db.String(50))
+    price = db.Column(db.Float)
+    signal = db.Column(db.String(50))
+    confidence = db.Column(db.Integer)
+    score = db.Column(db.Integer)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class OrderLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    symbol = db.Column(db.String(50))
+    transaction_type = db.Column(db.String(10))
+    quantity = db.Column(db.Integer)
+    status = db.Column(db.String(100))
+    order_id = db.Column(db.String(100))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+with app.app_context():
+    db.create_all()
 
 
 def is_logged_in():
@@ -142,13 +178,7 @@ def market():
 
     set_kite_token()
 
-    symbols = [
-        "NSE:INFY",
-        "NSE:RELIANCE",
-        "NSE:TCS",
-        "NSE:HDFCBANK"
-    ]
-
+    symbols = ["NSE:INFY", "NSE:RELIANCE", "NSE:TCS", "NSE:HDFCBANK"]
     quotes = kite.quote(symbols)
 
     instrument_token = 408065
@@ -161,26 +191,32 @@ def market():
     )
 
     df = pd.DataFrame(data)
-
     strategy = generate_ai_strategy(df)
-
-    gpt_reasoning = """
-    GPT reasoning temporarily disabled because OpenAI API quota is exceeded.
-
-    Current AI signal is generated using:
-    RSI, EMA20, EMA50, MACD, and Bollinger Bands.
-    """
 
     market_data = []
 
     for symbol in symbols:
         price = quotes[symbol]["last_price"]
 
+        market_signal = "HOLD" if price > 1000 else "WATCH"
+
         market_data.append({
             "symbol": symbol,
             "price": price,
-            "signal": "HOLD" if price > 1000 else "WATCH"
+            "signal": market_signal
         })
+
+        signal_log = SignalLog(
+            symbol=symbol,
+            price=price,
+            signal=strategy["signal"],
+            confidence=strategy["confidence"],
+            score=strategy["score"]
+        )
+
+        db.session.add(signal_log)
+
+    db.session.commit()
 
     fig = go.Figure()
 
@@ -213,6 +249,10 @@ def market():
     )
 
     chart = plot(fig, output_type="div")
+
+    gpt_reasoning = """
+    AI signal generated using RSI, EMA20, EMA50, MACD, and Bollinger Bands.
+    """
 
     return render_template(
         "market.html",
@@ -278,11 +318,40 @@ def orders():
             )
 
             message = f"Order placed successfully. Order ID: {order_id}"
+            status = "SUCCESS"
 
         except Exception as e:
+            order_id = None
             message = f"Order failed: {str(e)}"
+            status = "FAILED"
+
+        order_log = OrderLog(
+            symbol=symbol,
+            transaction_type=transaction_type,
+            quantity=quantity,
+            status=status,
+            order_id=order_id
+        )
+
+        db.session.add(order_log)
+        db.session.commit()
 
     return render_template("orders.html", message=message)
+
+
+@app.route("/history")
+def history():
+    if not is_logged_in():
+        return redirect(url_for("login_page"))
+
+    signals = SignalLog.query.order_by(SignalLog.created_at.desc()).limit(50).all()
+    orders = OrderLog.query.order_by(OrderLog.created_at.desc()).limit(50).all()
+
+    return render_template(
+        "history.html",
+        signals=signals,
+        orders=orders
+    )
 
 
 @app.route("/paper-trading")

@@ -5,3 +5,5 @@ pandas
 ta
 plotly
 gunicorn
+flask_sqlalchemy
+psycopg2-binary
