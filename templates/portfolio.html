@@ -1,50 +1,58 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Portfolio</title>
-</head>
-<body>
+{% extends "base.html" %}
 
-<a href="/dashboard">Dashboard</a> |
-<a href="/market">Market</a> |
-<a href="/portfolio">Portfolio</a> |
-<a href="/orders">Orders</a> |
-<a href="/paper-trading">Paper Trading</a> |
-<a href="/logout">Logout</a>
-<hr>
+{% block content %}
 
-    <h1>Portfolio</h1>
+<h2 class="mb-4">Portfolio</h2>
 
-    <h2>User Profile</h2>
-    <p>Name: {{ profile.user_name }}</p>
-    <p>Email: {{ profile.email }}</p>
+<div class="row g-4 mb-4">
+    <div class="col-md-4">
+        <div class="card p-3 shadow-sm">
+            <h5>Name</h5>
+            <h3>{{ profile.user_name }}</h3>
+        </div>
+    </div>
 
-    <h2>Available Cash</h2>
-    <p>{{ cash }}</p>
+    <div class="col-md-4">
+        <div class="card p-3 shadow-sm">
+            <h5>Email</h5>
+            <h6>{{ profile.email }}</h6>
+        </div>
+    </div>
 
-    <h2>Holdings</h2>
+    <div class="col-md-4">
+        <div class="card p-3 shadow-sm">
+            <h5>Available Cash</h5>
+            <h3>₹{{ cash }}</h3>
+        </div>
+    </div>
+</div>
 
-    <table border="1" cellpadding="10">
-        <tr>
-            <th>Stock</th>
-            <th>Quantity</th>
-            <th>Average Price</th>
-            <th>Last Price</th>
-            <th>P&L</th>
-        </tr>
+<div class="card shadow-sm">
+    <div class="card-header bg-dark text-white">
+        Holdings
+    </div>
 
-        {% for h in holdings %}
-        <tr>
-            <td>{{ h.tradingsymbol }}</td>
-            <td>{{ h.quantity }}</td>
-            <td>{{ h.average_price }}</td>
-            <td>{{ h.last_price }}</td>
-            <td>{{ h.pnl }}</td>
-        </tr>
-        {% endfor %}
-    </table>
+    <div class="card-body">
+        <table class="table table-striped">
+            <tr>
+                <th>Stock</th>
+                <th>Qty</th>
+                <th>Avg Price</th>
+                <th>Last Price</th>
+                <th>P&L</th>
+            </tr>
 
-    <br>
-    <a href="/dashboard">Back to Dashboard</a>
-</body>
-</html>
+            {% for h in holdings %}
+            <tr>
+                <td>{{ h.tradingsymbol }}</td>
+                <td>{{ h.quantity }}</td>
+                <td>{{ h.average_price }}</td>
+                <td>{{ h.last_price }}</td>
+                <td>{{ h.pnl }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+
+{% endblock %}

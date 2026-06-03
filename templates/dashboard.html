@@ -1,25 +1,46 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Dashboard</title>
-</head>
-<body>
+{% extends "base.html" %}
 
-<a href="/dashboard">Dashboard</a> |
-<a href="/market">Market</a> |
-<a href="/portfolio">Portfolio</a> |
-<a href="/orders">Orders</a> |
-<a href="/paper-trading">Paper Trading</a> |
-<a href="/logout">Logout</a>
-<hr>
+{% block content %}
 
+<div class="p-5 bg-dark text-white rounded-4 mb-4">
     <h1>AI Trading Bot Dashboard</h1>
+    <p class="lead">Live market data, AI signals, portfolio tracking and trade execution.</p>
+</div>
 
-    <ul>
-        <li><a href="/market">Market Watch</a></li>
-        <li><a href="/portfolio">Portfolio</a></li>
-        <li><a href="/orders">Orders</a></li>
-        <li><a href="/paper-trading">Paper Trading</a></li>
-    </ul>
-</body>
-</html>
+<div class="row g-4">
+
+    <div class="col-md-3">
+        <div class="card shadow-sm p-3">
+            <h5>Market Watch</h5>
+            <p>Live prices and AI signals.</p>
+            <a href="/market" class="btn btn-primary">Open</a>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card shadow-sm p-3">
+            <h5>Portfolio</h5>
+            <p>Holdings and available cash.</p>
+            <a href="/portfolio" class="btn btn-success">Open</a>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card shadow-sm p-3">
+            <h5>Orders</h5>
+            <p>Manual BUY/SELL orders.</p>
+            <a href="/orders" class="btn btn-warning">Open</a>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card shadow-sm p-3">
+            <h5>Paper Trading</h5>
+            <p>Test strategies safely.</p>
+            <a href="/paper-trading" class="btn btn-dark">Open</a>
+        </div>
+    </div>
+
+</div>
+
+{% endblock %}
