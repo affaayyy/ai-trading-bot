@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Place Order</title>
+</head>
+<body>
+
+<a href="/dashboard">Dashboard</a> |
+<a href="/market">Market</a> |
+<a href="/portfolio">Portfolio</a> |
+<a href="/orders">Orders</a> |
+<a href="/paper-trading">Paper Trading</a> |
+<a href="/logout">Logout</a>
+<hr>
+
+<h1>Manual Order Placement</h1>
+
+{% if message %}
+    <h3>{{ message }}</h3>
+{% endif %}
+
+<form method="POST">
+    <label>Stock Symbol:</label><br>
+    <input type="text" name="symbol" placeholder="INFY" required>
+
+    <br><br>
+
+    <label>Transaction Type:</label><br>
+    <select name="transaction_type" required>
+        <option value="BUY">BUY</option>
+        <option value="SELL">SELL</option>
+    </select>
+
+    <br><br>
+
+    <label>Quantity:</label><br>
+    <input type="number" name="quantity" min="1" required>
+
+    <br><br>
+
+    <button type="submit">Place Market Order</button>
+</form>
+
+<br>
+
+<p><b>Important:</b> This places a real Zerodha market order. Use carefully.</p>
+
+</body>
+</html>

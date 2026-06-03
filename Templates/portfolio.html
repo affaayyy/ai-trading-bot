@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Portfolio</title>
+</head>
+<body>
+
+<a href="/dashboard">Dashboard</a> |
+<a href="/market">Market</a> |
+<a href="/portfolio">Portfolio</a> |
+<a href="/orders">Orders</a> |
+<a href="/paper-trading">Paper Trading</a> |
+<a href="/logout">Logout</a>
+<hr>
+
+    <h1>Portfolio</h1>
+
+    <h2>User Profile</h2>
+    <p>Name: {{ profile.user_name }}</p>
+    <p>Email: {{ profile.email }}</p>
+
+    <h2>Available Cash</h2>
+    <p>{{ cash }}</p>
+
+    <h2>Holdings</h2>
+
+    <table border="1" cellpadding="10">
+        <tr>
+            <th>Stock</th>
+            <th>Quantity</th>
+            <th>Average Price</th>
+            <th>Last Price</th>
+            <th>P&L</th>
+        </tr>
+
+        {% for h in holdings %}
+        <tr>
+            <td>{{ h.tradingsymbol }}</td>
+            <td>{{ h.quantity }}</td>
+            <td>{{ h.average_price }}</td>
+            <td>{{ h.last_price }}</td>
+            <td>{{ h.pnl }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <br>
+    <a href="/dashboard">Back to Dashboard</a>
+</body>
+</html>
