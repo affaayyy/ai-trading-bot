@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2 class="mb-4">Autonomous AI Trading Engine</h2>
+
+<div class="card shadow-sm p-4 mb-4">
+
+    <h4>Status</h4>
+
+    {% if auto_enabled %}
+
+        <span class="badge bg-danger">
+            LIVE AUTO TRADING ENABLED
+        </span>
+
+    {% else %}
+
+        <span class="badge bg-warning text-dark">
+            SAFE MODE - AUTO TRADING DISABLED
+        </span>
+
+    {% endif %}
+
+</div>
+
+<div class="card shadow-sm p-4 mb-4">
+
+    <h4>AI Trade Setup</h4>
+
+    <p>
+        <b>Signal:</b> {{ signal }}
+    </p>
+
+    <p>
+        <b>Confidence:</b> {{ confidence }}%
+    </p>
+
+    <p>
+        <b>Score:</b> {{ score }}
+    </p>
+
+    <p>
+        <b>Entry Price:</b> ₹{{ latest_price }}
+    </p>
+
+   {% if stop_loss %}
+
+<p class="text-danger">
+    <b>Stop Loss:</b> ₹{{ stop_loss }}
+</p>
+
+{% else %}
+
+<p class="text-danger">
+    <b>Stop Loss:</b> Not Applicable
+</p>
+
+{% endif %}
+
+
+{% if target %}
+
+<p class="text-success">
+    <b>Target:</b> ₹{{ target }}
+</p>
+
+{% else %}
+
+<p class="text-success">
+    <b>Target:</b> Not Applicable
+</p>
+
+{% endif %}
+
+</div>
+
+<div class="card shadow-sm p-4">
+
+    <h4>Execution Result</h4>
+
+    <pre>{{ result }}</pre>
+
+</div>
+
+{% endblock %}

@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2 class="mb-4">AI Strategy Backtesting Engine v2</h2>
+
+<div class="row g-4 mb-4">
+
+    <div class="col-md-3">
+        <div class="card p-3 shadow-sm">
+            <h6>Initial Capital</h6>
+            <h3>₹{{ result.initial_capital }}</h3>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card p-3 shadow-sm">
+            <h6>Final Value</h6>
+            <h3>₹{{ result.final_value }}</h3>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card p-3 shadow-sm">
+            <h6>Total P&L</h6>
+            {% if result.total_pnl >= 0 %}
+                <h3 class="text-success">₹{{ result.total_pnl }}</h3>
+            {% else %}
+                <h3 class="text-danger">₹{{ result.total_pnl }}</h3>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card p-3 shadow-sm">
+            <h6>ROI</h6>
+            <h3>{{ result.roi }}%</h3>
+        </div>
+    </div>
+
+</div>
+
+<div class="row g-4 mb-4">
+
+    <div class="col-md-4">
+        <div class="card p-3 shadow-sm">
+            <h6>Total Trades</h6>
+            <h3>{{ result.total_trades }}</h3>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card p-3 shadow-sm">
+            <h6>Win Rate</h6>
+            <h3>{{ result.win_rate }}%</h3>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card p-3 shadow-sm">
+            <h6>Max Drawdown</h6>
+            <h3 class="text-danger">{{ result.max_drawdown }}%</h3>
+        </div>
+    </div>
+
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-dark text-white">
+        Equity Curve
+    </div>
+    <div class="card-body">
+        {{ equity_chart|safe }}
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-header bg-dark text-white">
+        Trade History
+    </div>
+
+    <div class="card-body">
+        <table class="table table-striped">
+            <tr>
+                <th>Date</th>
+                <th>Action</th>
+                <th>Price</th>
+                <th>Quantity</th>
+                <th>P&L</th>
+                <th>Reason</th>
+            </tr>
+
+            {% for trade in result.trades %}
+            <tr>
+                <td>{{ trade.date }}</td>
+                <td>{{ trade.action }}</td>
+                <td>₹{{ trade.price }}</td>
+                <td>{{ trade.quantity }}</td>
+
+                {% if trade.pnl >= 0 %}
+                    <td class="text-success">₹{{ trade.pnl }}</td>
+                {% else %}
+                    <td class="text-danger">₹{{ trade.pnl }}</td>
+                {% endif %}
+
+                <td>{{ trade.reason }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+
+{% endblock %}

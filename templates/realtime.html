@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2 class="mb-4">Real-Time Live Market Dashboard</h2>
+
+<a href="/start-stream" class="btn btn-success mb-4">Start Live Stream</a>
+
+<div class="card shadow-sm">
+    <div class="card-header bg-dark text-white">
+        Live Prices
+    </div>
+
+    <div class="card-body">
+        <table class="table table-striped">
+            <tr>
+                <th>Stock</th>
+                <th>Live Price</th>
+            </tr>
+
+            <tr>
+                <td>INFY</td>
+                <td id="INFY">Waiting...</td>
+            </tr>
+
+            <tr>
+                <td>RELIANCE</td>
+                <td id="RELIANCE">Waiting...</td>
+            </tr>
+
+            <tr>
+                <td>TCS</td>
+                <td id="TCS">Waiting...</td>
+            </tr>
+
+            <tr>
+                <td>HDFCBANK</td>
+                <td id="HDFCBANK">Waiting...</td>
+            </tr>
+        </table>
+    </div>
+</div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+<script>
+    const socket = io();
+
+    socket.on("price_update", function(data) {
+        const cell = document.getElementById(data.symbol);
+
+        if (cell) {
+            cell.innerText = data.price;
+        }
+    });
+</script>
+
+{% endblock %}
