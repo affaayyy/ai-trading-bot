@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, session, redirect, url_for
+from flask import Flask, request, render_template, session, redirect, url_for, has_request_context
 from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO
 from kiteconnect import KiteConnect, KiteTicker
@@ -106,17 +106,40 @@ class OrderLog(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class TokenStore(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    access_token = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 with app.app_context():
     db.create_all()
 
 
 def is_logged_in():
-    return "access_token" in session
+    if has_request_context():
+        return "access_token" in session
+
+    latest_token = TokenStore.query.order_by(TokenStore.created_at.desc()).first()
+    return latest_token is not None
 
 
 def set_kite_token():
-    if is_logged_in():
-        kite.set_access_token(session["access_token"])
+    token = None
+
+    if has_request_context() and "access_token" in session:
+        token = session["access_token"]
+    else:
+        latest_token = TokenStore.query.order_by(TokenStore.created_at.desc()).first()
+
+        if latest_token:
+            token = latest_token.access_token
+
+    if token:
+        kite.set_access_token(token)
+        return True
+
+    return False
 
 
 def send_telegram_alert(message):
@@ -615,7 +638,15 @@ def run_backtest_v2(df, initial_capital=100000):
 def autonomous_scan_job():
     with app.app_context():
         try:
-            results = scan_multiple_stocks(top_n=5, min_confidence_filter=MIN_CONFIDENCE)
+            if not set_kite_token():
+                print("No valid Zerodha token found. Please login once today.", flush=True)
+                return
+
+            results = scan_multiple_stocks(
+                top_n=5,
+                min_confidence_filter=MIN_CONFIDENCE
+            )
+
             alert_count = send_scanner_alerts(results)
 
             for item in results:
@@ -628,10 +659,10 @@ def autonomous_scan_job():
                         confidence=item["confidence"]
                     )
 
-            print(f"Autonomous scan completed. Alerts sent: {alert_count}")
+            print(f"Autonomous scan completed. Alerts sent: {alert_count}", flush=True)
 
         except Exception as e:
-            print("Autonomous scan failed:", str(e))
+            print("Autonomous scan failed:", str(e), flush=True)
 
 
 @app.route("/")
@@ -649,8 +680,18 @@ def login():
     if not request_token:
         return "Login failed. Request token not found."
 
-    data = kite.generate_session(request_token, api_secret=api_secret)
-    session["access_token"] = data["access_token"]
+    data = kite.generate_session(
+        request_token,
+        api_secret=api_secret
+    )
+
+    access_token = data["access_token"]
+    session["access_token"] = access_token
+
+    db.session.add(TokenStore(access_token=access_token))
+    db.session.commit()
+
+    print("Daily Zerodha access token saved successfully.", flush=True)
 
     return redirect(url_for("dashboard"))
 
@@ -764,167 +805,6 @@ def market():
     )
 
 
-@app.route("/portfolio")
-def portfolio():
-    if not is_logged_in():
-        return redirect(url_for("login_page"))
-
-    set_kite_token()
-
-    profile = kite.profile()
-    holdings = kite.holdings()
-    margins = kite.margins()
-    cash = margins["equity"]["available"]["cash"]
-
-    analytics = calculate_portfolio_analytics(holdings)
-
-    if analytics["holdings_data"]:
-        allocation_fig = go.Figure()
-        allocation_fig.add_trace(go.Pie(
-            labels=[h["symbol"] for h in analytics["holdings_data"]],
-            values=[h["current_value"] for h in analytics["holdings_data"]],
-            hole=0.4
-        ))
-        allocation_fig.update_layout(title="Portfolio Allocation", height=400)
-        allocation_chart = plot(allocation_fig, output_type="div")
-    else:
-        allocation_chart = "<p>No holdings available.</p>"
-
-    return render_template(
-        "portfolio.html",
-        profile=profile,
-        cash=cash,
-        analytics=analytics,
-        allocation_chart=allocation_chart
-    )
-
-
-@app.route("/orders", methods=["GET", "POST"])
-def orders():
-    if not is_logged_in():
-        return redirect(url_for("login_page"))
-
-    set_kite_token()
-    message = None
-
-    if request.method == "POST":
-        symbol = request.form.get("symbol").upper()
-        transaction_type = request.form.get("transaction_type")
-        quantity = int(request.form.get("quantity"))
-
-        try:
-            order_id = kite.place_order(
-                variety=kite.VARIETY_REGULAR,
-                exchange=kite.EXCHANGE_NSE,
-                tradingsymbol=symbol,
-                transaction_type=transaction_type,
-                quantity=quantity,
-                product=kite.PRODUCT_CNC,
-                order_type=kite.ORDER_TYPE_MARKET
-            )
-            message = f"Order placed successfully. Order ID: {order_id}"
-            status = "SUCCESS"
-        except Exception as e:
-            order_id = None
-            message = f"Order failed: {str(e)}"
-            status = "FAILED"
-
-        db.session.add(OrderLog(
-            symbol=symbol,
-            transaction_type=transaction_type,
-            quantity=quantity,
-            status=status,
-            order_id=order_id
-        ))
-        db.session.commit()
-
-    return render_template("orders.html", message=message)
-
-
-@app.route("/history")
-def history():
-    if not is_logged_in():
-        return redirect(url_for("login_page"))
-
-    signals = SignalLog.query.order_by(SignalLog.created_at.desc()).limit(50).all()
-    orders = OrderLog.query.order_by(OrderLog.created_at.desc()).limit(50).all()
-
-    return render_template("history.html", signals=signals, orders=orders)
-
-
-@app.route("/paper-trading")
-def paper_trading():
-    if not is_logged_in():
-        return redirect(url_for("login_page"))
-
-    return render_template("paper_trading.html")
-
-
-@app.route("/auto-trade")
-def auto_trade():
-    if not is_logged_in():
-        return redirect(url_for("login_page"))
-
-    set_kite_token()
-
-    df = get_historical_df()
-    strategy = generate_ai_strategy(df)
-    latest_price = df.iloc[-1]["close"]
-    levels = calculate_trade_levels(latest_price, strategy["signal"])
-
-    result = execute_auto_trade(
-        symbol="INFY",
-        signal=strategy["signal"],
-        quantity=1,
-        entry_price=latest_price,
-        confidence=strategy["confidence"]
-    )
-
-    return render_template(
-        "auto_trade.html",
-        signal=strategy["signal"],
-        confidence=strategy["confidence"],
-        score=strategy["score"],
-        result=result,
-        auto_enabled=AUTO_TRADE_ENABLED,
-        stop_loss=levels["stop_loss"],
-        target=levels["target"],
-        latest_price=round(latest_price, 2)
-    )
-
-
-@app.route("/backtest")
-def backtest():
-    if not is_logged_in():
-        return redirect(url_for("login_page"))
-
-    set_kite_token()
-
-    df = get_historical_df()
-    result = run_backtest_v2(df)
-
-    equity_fig = go.Figure()
-    equity_fig.add_trace(go.Scatter(
-        x=[e["date"] for e in result["equity_curve"]],
-        y=[e["equity"] for e in result["equity_curve"]],
-        mode="lines",
-        name="Equity Curve"
-    ))
-    equity_fig.update_layout(
-        title="Backtest Equity Curve",
-        xaxis_title="Date",
-        yaxis_title="Portfolio Value",
-        height=450
-    )
-    equity_chart = plot(equity_fig, output_type="div")
-
-    return render_template(
-        "backtest.html",
-        result=result,
-        equity_chart=equity_chart
-    )
-
-
 @app.route("/scanner")
 def scanner():
     if not is_logged_in():
@@ -990,84 +870,6 @@ def scanner_send_alerts():
     )
 
 
-@app.route("/scanner/paper-trade/<symbol>/<action>")
-def scanner_paper_trade(symbol, action):
-    if not is_logged_in():
-        return redirect(url_for("login_page"))
-
-    message = f"""
-PAPER TRADE EXECUTED
-
-Stock: {symbol}
-Action: {action}
-"""
-
-    send_telegram_alert(message)
-
-    return render_template("scanner_trade_result.html", message=message)
-
-
-@app.route("/scanner/auto-trade/<symbol>")
-def scanner_auto_trade(symbol):
-    if not is_logged_in():
-        return redirect(url_for("login_page"))
-
-    set_kite_token()
-
-    token = STOCK_UNIVERSE.get(symbol)
-
-    if not token:
-        return "Invalid stock"
-
-    df = get_historical_df(token)
-    strategy = generate_ai_strategy(df)
-
-    entry_price = round(df.iloc[-1]["close"], 2)
-    current_price = round(get_live_price(symbol, entry_price), 2)
-    levels = calculate_trade_levels(entry_price, strategy["signal"])
-
-    result = execute_auto_trade(
-        symbol=symbol,
-        signal=strategy["signal"],
-        quantity=1,
-        entry_price=entry_price,
-        confidence=strategy["confidence"]
-    )
-
-    alert_message = f"""
-🤖 <b>AI AUTO TRADE ALERT</b>
-
-Stock: {symbol}
-Signal: {strategy["signal"]}
-Confidence: {strategy["confidence"]}%
-Score: {strategy["score"]}
-RSI: {strategy["rsi"]}
-
-Current Price: ₹{current_price}
-Entry Price: ₹{entry_price}
-Stop Loss: ₹{levels["stop_loss"]}
-Target Price: ₹{levels["target"]}
-
-Result:
-{result}
-"""
-
-    send_telegram_alert(alert_message)
-
-    return render_template("scanner_trade_result.html", message=result)
-
-
-@app.route("/send-alert")
-def send_alert():
-    if not is_logged_in():
-        return redirect(url_for("login_page"))
-
-    results = scan_multiple_stocks(top_n=5, min_confidence_filter=MIN_CONFIDENCE)
-    alert_count = send_scanner_alerts(results)
-
-    return f"High-confidence Telegram Alerts Sent: {alert_count}"
-
-
 @app.route("/run-scheduler-now")
 def run_scheduler_now():
     if not is_logged_in():
@@ -1079,81 +881,6 @@ def run_scheduler_now():
         "scanner_trade_result.html",
         message="Autonomous high-confidence scheduler job executed manually."
     )
-
-
-live_prices = {}
-
-TOKENS = {
-    408065: "INFY",
-    738561: "RELIANCE",
-    2953217: "TCS",
-    341249: "HDFCBANK"
-}
-
-
-@app.route("/realtime")
-def realtime():
-    if not is_logged_in():
-        return redirect(url_for("login_page"))
-
-    return render_template("realtime.html")
-
-
-def start_kite_stream():
-    access_token = os.getenv("KITE_ACCESS_TOKEN")
-
-    kws = KiteTicker(api_key, access_token)
-
-    def on_ticks(ws, ticks):
-        for tick in ticks:
-            token = tick["instrument_token"]
-            price = tick["last_price"]
-            symbol = TOKENS.get(token, str(token))
-
-            live_prices[symbol] = price
-
-            socketio.emit("price_update", {
-                "symbol": symbol,
-                "price": price
-            })
-
-    def on_connect(ws, response):
-        tokens = list(TOKENS.keys())
-        ws.subscribe(tokens)
-        ws.set_mode(ws.MODE_FULL, tokens)
-
-    def on_close(ws, code, reason):
-        print("Realtime WebSocket closed:", code, reason)
-
-    kws.on_ticks = on_ticks
-    kws.on_connect = on_connect
-    kws.on_close = on_close
-
-    kws.connect(threaded=True)
-
-
-@app.route("/start-stream")
-def start_stream():
-    if not is_logged_in():
-        return redirect(url_for("login_page"))
-
-    thread = threading.Thread(target=start_kite_stream)
-    thread.daemon = True
-    thread.start()
-
-    return redirect(url_for("realtime"))
-
-
-scheduler = BackgroundScheduler()
-
-if SCHEDULER_ENABLED:
-    scheduler.add_job(
-        autonomous_scan_job,
-        "interval",
-        minutes=SCAN_INTERVAL_MINUTES
-    )
-
-    scheduler.start()
 
 
 if __name__ == "__main__":
