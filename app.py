@@ -19,14 +19,17 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "fallback_secret_key")
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 database_url = os.getenv("DATABASE_URL", "sqlite:///local.db")
+
 if database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
 db = SQLAlchemy(app)
 
 api_key = os.getenv("KITE_API_KEY")
@@ -43,6 +46,7 @@ STOP_LOSS_PERCENT = float(os.getenv("STOP_LOSS_PERCENT", 1))
 TARGET_PERCENT = float(os.getenv("TARGET_PERCENT", 2))
 MIN_CONFIDENCE = int(os.getenv("MIN_CONFIDENCE", 70))
 TRADE_CONFIDENCE = int(os.getenv("TRADE_CONFIDENCE", 80))
+
 SCHEDULER_ENABLED = os.getenv("SCHEDULER_ENABLED", "false").lower() == "true"
 SCAN_INTERVAL_MINUTES = int(os.getenv("SCAN_INTERVAL_MINUTES", 15))
 
@@ -77,7 +81,7 @@ STOCK_UNIVERSE = {
     "JSWSTEEL": 3001089,
     "HINDALCO": 348929,
     "ULTRACEMCO": 2952193,
-    "NESTLEIND": 4598529,
+    "NESTLEIND": 4598529
 }
 
 
@@ -107,6 +111,13 @@ class TokenStore(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class WatchlistStock(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    symbol = db.Column(db.String(50), unique=True, nullable=False)
+    instrument_token = db.Column(db.Integer, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 with app.app_context():
     db.create_all()
 
@@ -116,7 +127,11 @@ def get_latest_access_token():
         return session["access_token"]
 
     latest_token = TokenStore.query.order_by(TokenStore.created_at.desc()).first()
-    return latest_token.access_token if latest_token else None
+
+    if latest_token:
+        return latest_token.access_token
+
+    return None
 
 
 def is_logged_in():
@@ -125,10 +140,21 @@ def is_logged_in():
 
 def set_kite_token():
     token = get_latest_access_token()
+
     if token:
         kite.set_access_token(token)
         return True
+
     return False
+
+
+def get_watchlist_symbols():
+    stocks = WatchlistStock.query.order_by(WatchlistStock.created_at.desc()).all()
+
+    if stocks:
+        return [stock.symbol for stock in stocks]
+
+    return ["INFY", "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK"]
 
 
 def send_telegram_alert(message):
@@ -136,10 +162,11 @@ def send_telegram_alert(message):
         return "Telegram not configured"
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
-        "parse_mode": "HTML",
+        "parse_mode": "HTML"
     }
 
     try:
@@ -157,7 +184,7 @@ def get_historical_df(instrument_token=408065):
         instrument_token,
         start_date,
         end_date,
-        "day",
+        "day"
     )
 
     return pd.DataFrame(data)
@@ -173,6 +200,7 @@ def generate_ai_strategy(df):
     df["macd_signal"] = macd.macd_signal()
 
     latest = df.iloc[-1]
+
     score = 0
     reasons = []
 
@@ -239,7 +267,7 @@ def generate_ai_strategy(df):
         "ema50": round(latest["ema50"], 2),
         "macd": round(latest["macd"], 2),
         "macd_signal": round(latest["macd_signal"], 2),
-        "reasons": reasons,
+        "reasons": reasons
     }
 
 
@@ -256,7 +284,7 @@ def calculate_trade_levels(entry_price, signal):
 
     return {
         "stop_loss": round(stop_loss, 2) if stop_loss else None,
-        "target": round(target, 2) if target else None,
+        "target": round(target, 2) if target else None
     }
 
 
@@ -306,18 +334,17 @@ def execute_auto_trade(symbol, signal, quantity=1, entry_price=None, confidence=
             transaction_type=transaction_type,
             quantity=quantity,
             product=kite.PRODUCT_CNC,
-            order_type=kite.ORDER_TYPE_MARKET,
+            order_type=kite.ORDER_TYPE_MARKET
         )
 
-        db.session.add(
-            OrderLog(
-                symbol=symbol,
-                transaction_type=transaction_type,
-                quantity=quantity,
-                status="AUTO_SUCCESS",
-                order_id=order_id,
-            )
-        )
+        db.session.add(OrderLog(
+            symbol=symbol,
+            transaction_type=transaction_type,
+            quantity=quantity,
+            status="AUTO_SUCCESS",
+            order_id=order_id
+        ))
+
         db.session.commit()
 
         levels = calculate_trade_levels(entry_price, signal)
@@ -334,15 +361,14 @@ Target: {levels["target"]}
 """
 
     except Exception as e:
-        db.session.add(
-            OrderLog(
-                symbol=symbol,
-                transaction_type="AUTO",
-                quantity=quantity,
-                status="AUTO_FAILED",
-                order_id=None,
-            )
-        )
+        db.session.add(OrderLog(
+            symbol=symbol,
+            transaction_type="AUTO",
+            quantity=quantity,
+            status="AUTO_FAILED",
+            order_id=None
+        ))
+
         db.session.commit()
 
         return f"Auto trade failed.\n\nReason: {str(e)}"
@@ -368,26 +394,27 @@ def calculate_portfolio_analytics(holdings):
         current_value += value
         total_pnl += pnl
 
-        holdings_data.append(
-            {
-                "symbol": symbol,
-                "quantity": quantity,
-                "average_price": round(avg_price, 2),
-                "last_price": round(last_price, 2),
-                "invested": round(invested, 2),
-                "current_value": round(value, 2),
-                "pnl": round(pnl, 2),
-            }
-        )
+        holdings_data.append({
+            "symbol": symbol,
+            "quantity": quantity,
+            "average_price": round(avg_price, 2),
+            "last_price": round(last_price, 2),
+            "invested": round(invested, 2),
+            "current_value": round(value, 2),
+            "pnl": round(pnl, 2)
+        })
 
-    pnl_percent = (total_pnl / total_invested) * 100 if total_invested > 0 else 0
+    pnl_percent = 0
+
+    if total_invested > 0:
+        pnl_percent = (total_pnl / total_invested) * 100
 
     return {
         "total_invested": round(total_invested, 2),
         "current_value": round(current_value, 2),
         "total_pnl": round(total_pnl, 2),
         "pnl_percent": round(pnl_percent, 2),
-        "holdings_data": holdings_data,
+        "holdings_data": holdings_data
     }
 
 
@@ -418,7 +445,11 @@ def get_opportunity_score(strategy):
 def scan_multiple_stocks(selected_symbols=None, top_n=None, min_confidence_filter=0):
     set_kite_token()
 
-    symbols_to_scan = selected_symbols if selected_symbols else list(STOCK_UNIVERSE.keys())
+    if selected_symbols:
+        symbols_to_scan = selected_symbols
+    else:
+        symbols_to_scan = get_watchlist_symbols()
+
     scan_results = []
 
     for symbol in symbols_to_scan:
@@ -451,34 +482,36 @@ def scan_multiple_stocks(selected_symbols=None, top_n=None, min_confidence_filte
                 "rsi": strategy["rsi"],
                 "ema20": strategy["ema20"],
                 "ema50": strategy["ema50"],
-                "reasons": ", ".join(strategy["reasons"]),
+                "reasons": ", ".join(strategy["reasons"])
             }
 
             if item["confidence"] >= min_confidence_filter:
                 scan_results.append(item)
 
         except Exception as e:
-            scan_results.append(
-                {
-                    "symbol": symbol,
-                    "price": "Error",
-                    "current_price": "Error",
-                    "entry_price": "Error",
-                    "stop_loss": "-",
-                    "target": "-",
-                    "signal": "ERROR",
-                    "raw_signal": "ERROR",
-                    "confidence": 0,
-                    "score": 0,
-                    "opportunity_score": 0,
-                    "rsi": "-",
-                    "ema20": "-",
-                    "ema50": "-",
-                    "reasons": str(e),
-                }
-            )
+            scan_results.append({
+                "symbol": symbol,
+                "price": "Error",
+                "current_price": "Error",
+                "entry_price": "Error",
+                "stop_loss": "-",
+                "target": "-",
+                "signal": "ERROR",
+                "raw_signal": "ERROR",
+                "confidence": 0,
+                "score": 0,
+                "opportunity_score": 0,
+                "rsi": "-",
+                "ema20": "-",
+                "ema50": "-",
+                "reasons": str(e)
+            })
 
-    scan_results = sorted(scan_results, key=lambda x: x["opportunity_score"], reverse=True)
+    scan_results = sorted(
+        scan_results,
+        key=lambda x: x["opportunity_score"],
+        reverse=True
+    )
 
     if top_n:
         scan_results = scan_results[:top_n]
@@ -538,13 +571,26 @@ def run_backtest_v2(df, initial_capital=100000):
 
         current_equity = capital + (position * price)
         peak_equity = max(peak_equity, current_equity)
+
         drawdown = ((peak_equity - current_equity) / peak_equity) * 100
         max_drawdown = max(max_drawdown, drawdown)
 
-        equity_curve.append({"date": row["date"], "equity": round(current_equity, 2)})
+        equity_curve.append({
+            "date": row["date"],
+            "equity": round(current_equity, 2)
+        })
 
-        buy_signal = row["rsi"] < 35 and row["ema20"] > row["ema50"] and position == 0
-        sell_signal = row["rsi"] > 65 and position > 0
+        buy_signal = (
+            row["rsi"] < 35 and
+            row["ema20"] > row["ema50"] and
+            position == 0
+        )
+
+        sell_signal = (
+            row["rsi"] > 65 and
+            position > 0
+        )
+
         stop_loss_hit = position > 0 and price <= entry_price * 0.99
         target_hit = position > 0 and price >= entry_price * 1.02
 
@@ -556,16 +602,14 @@ def run_backtest_v2(df, initial_capital=100000):
                 entry_price = price
                 capital -= quantity * price
 
-                trades.append(
-                    {
-                        "date": row["date"],
-                        "action": "BUY",
-                        "price": round(price, 2),
-                        "quantity": quantity,
-                        "pnl": 0,
-                        "reason": "AI BUY Signal",
-                    }
-                )
+                trades.append({
+                    "date": row["date"],
+                    "action": "BUY",
+                    "price": round(price, 2),
+                    "quantity": quantity,
+                    "pnl": 0,
+                    "reason": "AI BUY Signal"
+                })
 
         elif sell_signal or stop_loss_hit or target_hit:
             capital += position * price
@@ -578,16 +622,14 @@ def run_backtest_v2(df, initial_capital=100000):
             elif target_hit:
                 reason = "Target Hit"
 
-            trades.append(
-                {
-                    "date": row["date"],
-                    "action": "SELL",
-                    "price": round(price, 2),
-                    "quantity": position,
-                    "pnl": round(pnl, 2),
-                    "reason": reason,
-                }
-            )
+            trades.append({
+                "date": row["date"],
+                "action": "SELL",
+                "price": round(price, 2),
+                "quantity": position,
+                "pnl": round(pnl, 2),
+                "reason": reason
+            })
 
             position = 0
             entry_price = 0
@@ -598,7 +640,11 @@ def run_backtest_v2(df, initial_capital=100000):
 
     sell_trades = [t for t in trades if t["action"] == "SELL"]
     winning_trades = [t for t in sell_trades if t["pnl"] > 0]
-    win_rate = (len(winning_trades) / len(sell_trades)) * 100 if sell_trades else 0
+
+    win_rate = 0
+
+    if sell_trades:
+        win_rate = (len(winning_trades) / len(sell_trades)) * 100
 
     return {
         "initial_capital": initial_capital,
@@ -609,7 +655,7 @@ def run_backtest_v2(df, initial_capital=100000):
         "win_rate": round(win_rate, 2),
         "max_drawdown": round(max_drawdown, 2),
         "trades": trades,
-        "equity_curve": equity_curve,
+        "equity_curve": equity_curve
     }
 
 
@@ -620,7 +666,11 @@ def autonomous_scan_job():
                 print("No valid Zerodha token found. Please login once today.", flush=True)
                 return
 
-            results = scan_multiple_stocks(top_n=5, min_confidence_filter=MIN_CONFIDENCE)
+            results = scan_multiple_stocks(
+                top_n=5,
+                min_confidence_filter=MIN_CONFIDENCE
+            )
+
             alert_count = send_scanner_alerts(results)
 
             for item in results:
@@ -630,7 +680,7 @@ def autonomous_scan_job():
                         signal=item["signal"],
                         quantity=1,
                         entry_price=item["entry_price"],
-                        confidence=item["confidence"],
+                        confidence=item["confidence"]
                     )
 
             print(f"Autonomous scan completed. Alerts sent: {alert_count}", flush=True)
@@ -654,7 +704,11 @@ def login():
     if not request_token:
         return "Login failed. Request token not found."
 
-    data = kite.generate_session(request_token, api_secret=api_secret)
+    data = kite.generate_session(
+        request_token,
+        api_secret=api_secret
+    )
+
     access_token = data["access_token"]
 
     session["access_token"] = access_token
@@ -700,56 +754,59 @@ def market():
     for symbol in symbols:
         price = quotes[symbol]["last_price"]
 
-        market_data.append(
-            {
-                "symbol": symbol,
-                "price": price,
-                "signal": "HOLD" if price > 1000 else "WATCH",
-            }
-        )
+        market_data.append({
+            "symbol": symbol,
+            "price": price,
+            "signal": "HOLD" if price > 1000 else "WATCH"
+        })
 
-        db.session.add(
-            SignalLog(
-                symbol=symbol,
-                price=price,
-                signal=strategy["signal"],
-                confidence=strategy["confidence"],
-                score=strategy["score"],
-            )
-        )
+        db.session.add(SignalLog(
+            symbol=symbol,
+            price=price,
+            signal=strategy["signal"],
+            confidence=strategy["confidence"],
+            score=strategy["score"]
+        ))
 
     db.session.commit()
 
     fig = go.Figure()
 
-    fig.add_trace(
-        go.Candlestick(
-            x=df["date"],
-            open=df["open"],
-            high=df["high"],
-            low=df["low"],
-            close=df["close"],
-            name="Candlestick",
-        )
-    )
+    fig.add_trace(go.Candlestick(
+        x=df["date"],
+        open=df["open"],
+        high=df["high"],
+        low=df["low"],
+        close=df["close"],
+        name="Candlestick"
+    ))
 
-    fig.add_trace(go.Scatter(x=df["date"], y=df["ema20"], mode="lines", name="EMA20"))
-    fig.add_trace(go.Scatter(x=df["date"], y=df["ema50"], mode="lines", name="EMA50"))
+    fig.add_trace(go.Scatter(
+        x=df["date"],
+        y=df["ema20"],
+        mode="lines",
+        name="EMA20"
+    ))
 
-    fig.add_trace(
-        go.Scatter(
-            x=[datetime.now()],
-            y=[live_price],
-            mode="markers+text",
-            name="Live Price",
-            text=[f"Live ₹{live_price}"],
-            textposition="top center",
-        )
-    )
+    fig.add_trace(go.Scatter(
+        x=df["date"],
+        y=df["ema50"],
+        mode="lines",
+        name="EMA50"
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=[datetime.now()],
+        y=[live_price],
+        mode="markers+text",
+        name="Live Price",
+        text=[f"Live ₹{live_price}"],
+        textposition="top center"
+    ))
 
     fig.update_layout(
         title=f"INFY AI Trading Chart - Live Price ₹{live_price}",
-        height=550,
+        height=550
     )
 
     chart = plot(fig, output_type="div")
@@ -767,7 +824,7 @@ def market():
         reasons=strategy["reasons"],
         gpt_reasoning="AI signal generated using RSI, EMA20, EMA50, MACD, and Bollinger Bands.",
         market_data=market_data,
-        chart=chart,
+        chart=chart
     )
 
 
@@ -782,18 +839,23 @@ def portfolio():
     holdings = kite.holdings()
     margins = kite.margins()
     cash = margins["equity"]["available"]["cash"]
+
     analytics = calculate_portfolio_analytics(holdings)
 
     if analytics["holdings_data"]:
         allocation_fig = go.Figure()
-        allocation_fig.add_trace(
-            go.Pie(
-                labels=[h["symbol"] for h in analytics["holdings_data"]],
-                values=[h["current_value"] for h in analytics["holdings_data"]],
-                hole=0.4,
-            )
+
+        allocation_fig.add_trace(go.Pie(
+            labels=[h["symbol"] for h in analytics["holdings_data"]],
+            values=[h["current_value"] for h in analytics["holdings_data"]],
+            hole=0.4
+        ))
+
+        allocation_fig.update_layout(
+            title="Portfolio Allocation",
+            height=400
         )
-        allocation_fig.update_layout(title="Portfolio Allocation", height=400)
+
         allocation_chart = plot(allocation_fig, output_type="div")
     else:
         allocation_chart = "<p>No holdings available.</p>"
@@ -803,7 +865,7 @@ def portfolio():
         profile=profile,
         cash=cash,
         analytics=analytics,
-        allocation_chart=allocation_chart,
+        allocation_chart=allocation_chart
     )
 
 
@@ -813,6 +875,7 @@ def orders():
         return redirect(url_for("login_page"))
 
     set_kite_token()
+
     message = None
 
     if request.method == "POST":
@@ -828,7 +891,7 @@ def orders():
                 transaction_type=transaction_type,
                 quantity=quantity,
                 product=kite.PRODUCT_CNC,
-                order_type=kite.ORDER_TYPE_MARKET,
+                order_type=kite.ORDER_TYPE_MARKET
             )
 
             message = f"Order placed successfully. Order ID: {order_id}"
@@ -839,15 +902,14 @@ def orders():
             message = f"Order failed: {str(e)}"
             status = "FAILED"
 
-        db.session.add(
-            OrderLog(
-                symbol=symbol,
-                transaction_type=transaction_type,
-                quantity=quantity,
-                status=status,
-                order_id=order_id,
-            )
-        )
+        db.session.add(OrderLog(
+            symbol=symbol,
+            transaction_type=transaction_type,
+            quantity=quantity,
+            status=status,
+            order_id=order_id
+        ))
+
         db.session.commit()
 
     return render_template("orders.html", message=message)
@@ -861,7 +923,11 @@ def history():
     signals = SignalLog.query.order_by(SignalLog.created_at.desc()).limit(50).all()
     orders = OrderLog.query.order_by(OrderLog.created_at.desc()).limit(50).all()
 
-    return render_template("history.html", signals=signals, orders=orders)
+    return render_template(
+        "history.html",
+        signals=signals,
+        orders=orders
+    )
 
 
 @app.route("/paper-trading")
@@ -889,7 +955,7 @@ def auto_trade():
         signal=strategy["signal"],
         quantity=1,
         entry_price=latest_price,
-        confidence=strategy["confidence"],
+        confidence=strategy["confidence"]
     )
 
     return render_template(
@@ -901,7 +967,7 @@ def auto_trade():
         auto_enabled=AUTO_TRADE_ENABLED,
         stop_loss=levels["stop_loss"],
         target=levels["target"],
-        latest_price=round(latest_price, 2),
+        latest_price=round(latest_price, 2)
     )
 
 
@@ -916,20 +982,19 @@ def backtest():
     result = run_backtest_v2(df)
 
     equity_fig = go.Figure()
-    equity_fig.add_trace(
-        go.Scatter(
-            x=[e["date"] for e in result["equity_curve"]],
-            y=[e["equity"] for e in result["equity_curve"]],
-            mode="lines",
-            name="Equity Curve",
-        )
-    )
+
+    equity_fig.add_trace(go.Scatter(
+        x=[e["date"] for e in result["equity_curve"]],
+        y=[e["equity"] for e in result["equity_curve"]],
+        mode="lines",
+        name="Equity Curve"
+    ))
 
     equity_fig.update_layout(
         title="Backtest Equity Curve",
         xaxis_title="Date",
         yaxis_title="Portfolio Value",
-        height=450,
+        height=450
     )
 
     equity_chart = plot(equity_fig, output_type="div")
@@ -937,7 +1002,7 @@ def backtest():
     return render_template(
         "backtest.html",
         result=result,
-        equity_chart=equity_chart,
+        equity_chart=equity_chart
     )
 
 
@@ -947,6 +1012,7 @@ def scanner():
         return redirect(url_for("login_page"))
 
     selected_symbols = request.args.getlist("symbols")
+
     min_confidence_filter = request.args.get("min_confidence", "")
 
     try:
@@ -957,12 +1023,12 @@ def scanner():
     if selected_symbols:
         results = scan_multiple_stocks(
             selected_symbols=selected_symbols,
-            min_confidence_filter=min_confidence_filter_value,
+            min_confidence_filter=min_confidence_filter_value
         )
     else:
         results = scan_multiple_stocks(
             top_n=5,
-            min_confidence_filter=min_confidence_filter_value,
+            min_confidence_filter=min_confidence_filter_value
         )
 
     return render_template(
@@ -970,7 +1036,7 @@ def scanner():
         results=results,
         stock_universe=STOCK_UNIVERSE,
         selected_symbols=selected_symbols,
-        min_confidence=min_confidence_filter,
+        min_confidence=min_confidence_filter
     )
 
 
@@ -980,6 +1046,7 @@ def scanner_send_alerts():
         return redirect(url_for("login_page"))
 
     selected_symbols = request.args.getlist("symbols")
+
     min_confidence_filter = request.args.get("min_confidence", "")
 
     try:
@@ -990,19 +1057,19 @@ def scanner_send_alerts():
     if selected_symbols:
         results = scan_multiple_stocks(
             selected_symbols=selected_symbols,
-            min_confidence_filter=min_confidence_filter_value,
+            min_confidence_filter=min_confidence_filter_value
         )
     else:
         results = scan_multiple_stocks(
             top_n=5,
-            min_confidence_filter=min_confidence_filter_value,
+            min_confidence_filter=min_confidence_filter_value
         )
 
     alert_count = send_scanner_alerts(results)
 
     return render_template(
         "scanner_trade_result.html",
-        message=f"High-confidence alerts sent successfully. Total alerts: {alert_count}",
+        message=f"High-confidence alerts sent successfully. Total alerts: {alert_count}"
     )
 
 
@@ -1020,7 +1087,10 @@ Action: {action}
 
     send_telegram_alert(message)
 
-    return render_template("scanner_trade_result.html", message=message)
+    return render_template(
+        "scanner_trade_result.html",
+        message=message
+    )
 
 
 @app.route("/scanner/auto-trade/<symbol>")
@@ -1047,7 +1117,7 @@ def scanner_auto_trade(symbol):
         signal=strategy["signal"],
         quantity=1,
         entry_price=entry_price,
-        confidence=strategy["confidence"],
+        confidence=strategy["confidence"]
     )
 
     alert_message = f"""
@@ -1070,7 +1140,10 @@ Result:
 
     send_telegram_alert(alert_message)
 
-    return render_template("scanner_trade_result.html", message=result)
+    return render_template(
+        "scanner_trade_result.html",
+        message=result
+    )
 
 
 @app.route("/send-alert")
@@ -1078,7 +1151,11 @@ def send_alert():
     if not is_logged_in():
         return redirect(url_for("login_page"))
 
-    results = scan_multiple_stocks(top_n=5, min_confidence_filter=MIN_CONFIDENCE)
+    results = scan_multiple_stocks(
+        top_n=5,
+        min_confidence_filter=MIN_CONFIDENCE
+    )
+
     alert_count = send_scanner_alerts(results)
 
     return f"High-confidence Telegram Alerts Sent: {alert_count}"
@@ -1093,78 +1170,67 @@ def run_scheduler_now():
 
     return render_template(
         "scanner_trade_result.html",
-        message="Autonomous high-confidence scheduler job executed manually.",
+        message="Autonomous high-confidence scheduler job executed manually."
     )
 
 
-live_prices = {}
-
-TOKENS = {
-    408065: "INFY",
-    738561: "RELIANCE",
-    2953217: "TCS",
-    341249: "HDFCBANK",
-}
-
-
-@app.route("/realtime")
-def realtime():
+@app.route("/watchlist", methods=["GET", "POST"])
+def watchlist():
     if not is_logged_in():
         return redirect(url_for("login_page"))
 
-    return render_template("realtime.html")
+    message = None
+
+    if request.method == "POST":
+        symbol = request.form.get("symbol", "").upper().strip()
+
+        if not symbol:
+            message = "Please select a valid stock."
+
+        elif symbol not in STOCK_UNIVERSE:
+            message = "Stock not found in available universe."
+
+        else:
+            existing = WatchlistStock.query.filter_by(symbol=symbol).first()
+
+            if existing:
+                message = f"{symbol} is already in watchlist."
+
+            else:
+                db.session.add(WatchlistStock(
+                    symbol=symbol,
+                    instrument_token=STOCK_UNIVERSE[symbol]
+                ))
+
+                db.session.commit()
+
+                message = f"{symbol} added to watchlist successfully."
+
+    watchlist_stocks = WatchlistStock.query.order_by(
+        WatchlistStock.created_at.desc()
+    ).all()
+
+    return render_template(
+        "watchlist.html",
+        stock_universe=STOCK_UNIVERSE,
+        watchlist_stocks=watchlist_stocks,
+        message=message
+    )
 
 
-def start_kite_stream():
-    access_token = get_latest_access_token()
+@app.route("/watchlist/delete/<symbol>")
+def delete_watchlist_stock(symbol):
+    if not is_logged_in():
+        return redirect(url_for("login_page"))
 
-    if not access_token:
-        print("No access token found for live stream", flush=True)
-        return
+    stock = WatchlistStock.query.filter_by(symbol=symbol).first()
 
-    kws = KiteTicker(api_key, access_token)
+    if stock:
+        db.session.delete(stock)
+        db.session.commit()
 
-    def on_ticks(ws, ticks):
-        for tick in ticks:
-            token = tick["instrument_token"]
-            price = tick["last_price"]
-            symbol = TOKENS.get(token, str(token))
+    return redirect(url_for("watchlist"))
 
-            live_prices[symbol] = price
-
-            socketio.emit(
-                "price_update",
-                {
-                    "symbol": symbol,
-                    "price": price,
-                },
-            )
-
-            print(f"{symbol}: {price}", flush=True)
-
-    def on_connect(ws, response):
-        tokens = list(TOKENS.keys())
-        ws.subscribe(tokens)
-        ws.set_mode(ws.MODE_FULL, tokens)
-        print("Live stream connected", flush=True)
-
-    def on_close(ws, code, reason):
-        print("Live stream closed:", code, reason, flush=True)
-
-    def on_error(ws, code, reason):
-        print("Live stream error:", code, reason, flush=True)
-
-    kws.on_ticks = on_ticks
-    kws.on_connect = on_connect
-    kws.on_close = on_close
-    kws.on_error = on_error
-
-    kws.connect(threaded=True)
-
-
-@app.route("/start-stream")
-def start_stream():
-    return redirect(url_for("realtime"))
 
 @app.route("/api/live-prices")
 def api_live_prices():
@@ -1173,8 +1239,9 @@ def api_live_prices():
 
     set_kite_token()
 
+    symbols = ["NSE:INFY", "NSE:RELIANCE", "NSE:TCS", "NSE:HDFCBANK"]
+
     try:
-        symbols = ["NSE:INFY", "NSE:RELIANCE", "NSE:TCS", "NSE:HDFCBANK"]
         quotes = kite.quote(symbols)
 
         return {
@@ -1187,9 +1254,35 @@ def api_live_prices():
     except Exception as e:
         return {"error": str(e)}, 500
 
+
+@app.route("/realtime")
+def realtime():
+    if not is_logged_in():
+        return redirect(url_for("login_page"))
+
+    return render_template("realtime.html")
+
+
+@app.route("/start-stream")
+def start_stream():
+    return redirect(url_for("realtime"))
+
+
+scheduler = BackgroundScheduler()
+
+if SCHEDULER_ENABLED:
+    scheduler.add_job(
+        autonomous_scan_job,
+        "interval",
+        minutes=SCAN_INTERVAL_MINUTES
+    )
+
+    scheduler.start()
+
+
 if __name__ == "__main__":
     socketio.run(
         app,
         debug=True,
-        allow_unsafe_werkzeug=True,
+        allow_unsafe_werkzeug=True
     )

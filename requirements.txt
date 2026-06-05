@@ -1,5 +1,4 @@
 flask
-kiteconnect
 python-dotenv
 pandas
 ta
@@ -7,8 +6,6 @@ plotly
 gunicorn
 flask_sqlalchemy
 psycopg2-binary
-flask-socketio
-eventlet
 requests
 APScheduler
 eventlet
