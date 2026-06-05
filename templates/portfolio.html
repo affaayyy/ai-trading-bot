@@ -2,56 +2,95 @@
 
 {% block content %}
 
-<h2 class="mb-4">Portfolio</h2>
+<h2 class="mb-4">Portfolio Analytics Dashboard</h2>
 
 <div class="row g-4 mb-4">
-    <div class="col-md-4">
-        <div class="card p-3 shadow-sm">
-            <h5>Name</h5>
-            <h3>{{ profile.user_name }}</h3>
-        </div>
-    </div>
 
-    <div class="col-md-4">
+    <div class="col-md-3">
         <div class="card p-3 shadow-sm">
-            <h5>Email</h5>
-            <h6>{{ profile.email }}</h6>
-        </div>
-    </div>
-
-    <div class="col-md-4">
-        <div class="card p-3 shadow-sm">
-            <h5>Available Cash</h5>
+            <h6>Available Cash</h6>
             <h3>₹{{ cash }}</h3>
         </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card p-3 shadow-sm">
+            <h6>Total Invested</h6>
+            <h3>₹{{ analytics.total_invested }}</h3>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card p-3 shadow-sm">
+            <h6>Current Value</h6>
+            <h3>₹{{ analytics.current_value }}</h3>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card p-3 shadow-sm">
+            <h6>Total P&L</h6>
+
+            {% if analytics.total_pnl >= 0 %}
+                <h3 class="text-success">₹{{ analytics.total_pnl }}</h3>
+            {% else %}
+                <h3 class="text-danger">₹{{ analytics.total_pnl }}</h3>
+            {% endif %}
+
+            <small>{{ analytics.pnl_percent }}%</small>
+        </div>
+    </div>
+
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-dark text-white">
+        Allocation Chart
+    </div>
+
+    <div class="card-body">
+        {{ allocation_chart|safe }}
     </div>
 </div>
 
 <div class="card shadow-sm">
     <div class="card-header bg-dark text-white">
-        Holdings
+        Holdings Analytics
     </div>
 
     <div class="card-body">
-        <table class="table table-striped">
+
+        <table class="table table-striped table-hover">
+
             <tr>
                 <th>Stock</th>
                 <th>Qty</th>
                 <th>Avg Price</th>
                 <th>Last Price</th>
+                <th>Invested</th>
+                <th>Current Value</th>
                 <th>P&L</th>
             </tr>
 
-            {% for h in holdings %}
+            {% for h in analytics.holdings_data %}
             <tr>
-                <td>{{ h.tradingsymbol }}</td>
+                <td><b>{{ h.symbol }}</b></td>
                 <td>{{ h.quantity }}</td>
-                <td>{{ h.average_price }}</td>
-                <td>{{ h.last_price }}</td>
-                <td>{{ h.pnl }}</td>
+                <td>₹{{ h.average_price }}</td>
+                <td>₹{{ h.last_price }}</td>
+                <td>₹{{ h.invested }}</td>
+                <td>₹{{ h.current_value }}</td>
+
+                {% if h.pnl >= 0 %}
+                    <td class="text-success">₹{{ h.pnl }}</td>
+                {% else %}
+                    <td class="text-danger">₹{{ h.pnl }}</td>
+                {% endif %}
             </tr>
             {% endfor %}
+
         </table>
+
     </div>
 </div>
 

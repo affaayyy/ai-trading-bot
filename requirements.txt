@@ -9,3 +9,5 @@ flask_sqlalchemy
 psycopg2-binary
 flask-socketio
 eventlet
+requests
+APScheduler

@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2 class="mb-4">AI Multi-Stock Scanner</h2>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-dark text-white">
+        Select Stocks to Scan
+    </div>
+
+    <div class="card-body">
+
+        <form method="GET" action="/scanner">
+
+            <div class="mb-3">
+                <label class="form-label">
+                    Minimum Confidence %
+                </label>
+
+                <input
+                    type="number"
+                    name="min_confidence"
+                    class="form-control"
+                    min="0"
+                    max="100"
+                    placeholder="Example: 70"
+                    value="{{ min_confidence }}"
+                >
+            </div>
+
+            <label class="form-label">
+                Select multiple stocks:
+            </label>
+
+            <select name="symbols" class="form-select mb-3" multiple size="10">
+
+                {% for symbol, token in stock_universe.items() %}
+
+                    <option value="{{ symbol }}"
+                        {% if symbol in selected_symbols %}
+                            selected
+                        {% endif %}
+                    >
+                        {{ symbol }}
+                    </option>
+
+                {% endfor %}
+
+            </select>
+
+            <button class="btn btn-primary" type="submit">
+                Scan Selected Stocks
+            </button>
+
+            <a href="/scanner" class="btn btn-secondary">
+                Default Top 5 Scan
+            </a>
+
+            <button
+                class="btn btn-danger"
+                type="submit"
+                formaction="/scanner/send-alerts"
+                formmethod="GET"
+            >
+                Send Alerts
+            </button>
+
+            <a href="/run-scheduler-now" class="btn btn-dark">
+                Run Scheduler Now
+            </a>
+
+        </form>
+
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+
+    <div class="card-header bg-dark text-white">
+        Top AI Opportunities
+    </div>
+
+    <div class="card-body">
+
+        <table class="table table-striped table-hover">
+
+            <tr>
+                <th>Rank</th>
+                <th>Stock</th>
+                <th>Current Price</th>
+                <th>Entry Price</th>
+                <th>Stop Loss</th>
+                <th>Target</th>
+                <th>Signal</th>
+                <th>Confidence</th>
+                <th>Score</th>
+                <th>RSI</th>
+                <th>Actions</th>
+            </tr>
+
+            {% for item in results %}
+
+            <tr>
+
+                <td>{{ loop.index }}</td>
+
+                <td><b>{{ item.symbol }}</b></td>
+
+                <td>₹{{ item.current_price }}</td>
+
+                <td>₹{{ item.entry_price }}</td>
+
+                <td>₹{{ item.stop_loss }}</td>
+
+                <td>₹{{ item.target }}</td>
+
+                <td>
+                    {% if item.signal == "BUY" or item.signal == "STRONG BUY" %}
+                        <span class="badge bg-success">{{ item.signal }}</span>
+                    {% elif item.signal == "SELL" or item.signal == "STRONG SELL" %}
+                        <span class="badge bg-danger">{{ item.signal }}</span>
+                    {% elif item.signal == "WATCH" %}
+                        <span class="badge bg-info text-dark">WATCH</span>
+                    {% elif item.signal == "ERROR" %}
+                        <span class="badge bg-secondary">ERROR</span>
+                    {% else %}
+                        <span class="badge bg-warning text-dark">{{ item.signal }}</span>
+                    {% endif %}
+                </td>
+
+                <td>{{ item.confidence }}%</td>
+
+                <td>{{ item.score }}</td>
+
+                <td>{{ item.rsi }}</td>
+
+                <td>
+                    <a href="/market" class="btn btn-primary btn-sm">
+                        Analyze
+                    </a>
+
+                    <a href="/scanner/paper-trade/{{ item.symbol }}/BUY" class="btn btn-success btn-sm">
+                        Paper Buy
+                    </a>
+
+                    <a href="/scanner/paper-trade/{{ item.symbol }}/SELL" class="btn btn-danger btn-sm">
+                        Paper Sell
+                    </a>
+
+                    <a href="/scanner/auto-trade/{{ item.symbol }}" class="btn btn-dark btn-sm">
+                        Auto Trade
+                    </a>
+                </td>
+
+            </tr>
+
+            {% endfor %}
+
+        </table>
+
+        {% if results|length == 0 %}
+            <div class="alert alert-warning">
+                No stocks matched your confidence filter.
+            </div>
+        {% endif %}
+
+    </div>
+
+</div>
+
+{% endblock %}
