@@ -43,6 +43,14 @@ TARGET_PERCENT = float(os.getenv("TARGET_PERCENT", 2))
 MIN_CONFIDENCE = int(os.getenv("MIN_CONFIDENCE", 70))
 TRADE_CONFIDENCE = int(os.getenv("TRADE_CONFIDENCE", 80))
 
+# Phase 23: AI Position Sizing + Capital Management
+ACCOUNT_CAPITAL = float(os.getenv("ACCOUNT_CAPITAL", 100000))
+RISK_PER_TRADE_PERCENT = float(os.getenv("RISK_PER_TRADE_PERCENT", 1))
+MAX_DAILY_LOSS_PERCENT = float(os.getenv("MAX_DAILY_LOSS_PERCENT", 3))
+MAX_POSITION_VALUE_PERCENT = float(os.getenv("MAX_POSITION_VALUE_PERCENT", 20))
+MAX_PORTFOLIO_EXPOSURE_PERCENT = float(os.getenv("MAX_PORTFOLIO_EXPOSURE_PERCENT", 60))
+MIN_TRADE_QTY = int(os.getenv("MIN_TRADE_QTY", 1))
+
 SCHEDULER_ENABLED = os.getenv("SCHEDULER_ENABLED", "false").lower() == "true"
 SCAN_INTERVAL_MINUTES = int(os.getenv("SCAN_INTERVAL_MINUTES", 15))
 MONITOR_INTERVAL_MINUTES = int(os.getenv("MONITOR_INTERVAL_MINUTES", 5))
@@ -289,21 +297,125 @@ def calculate_journal_pnl(signal, entry_price, current_price, quantity):
     return 0
 
 
-def risk_check(symbol, signal, quantity, confidence):
+def get_effective_capital():
+    """Use broker available cash when available, otherwise fallback to ACCOUNT_CAPITAL from .env."""
+    try:
+        if set_kite_token():
+            margins = kite.margins()
+            cash = margins.get("equity", {}).get("available", {}).get("cash")
+            if cash and cash > 0:
+                return float(cash)
+    except Exception:
+        pass
+
+    return float(ACCOUNT_CAPITAL)
+
+
+def get_open_exposure_value():
+    open_trades = TradeJournal.query.filter_by(status="OPEN").all()
+    exposure = 0
+
+    for trade in open_trades:
+        exposure += (trade.entry_price or 0) * (trade.quantity or 0)
+
+    return round(exposure, 2)
+
+
+def get_today_realized_pnl():
+    today = datetime.utcnow().date()
+    trades = TradeJournal.query.filter(
+        db.func.date(TradeJournal.created_at) == today,
+        TradeJournal.status != "OPEN"
+    ).all()
+
+    return round(sum([trade.pnl or 0 for trade in trades]), 2)
+
+
+def calculate_position_size(entry_price, stop_loss):
+    capital = get_effective_capital()
+
+    if not entry_price or not stop_loss:
+        return MIN_TRADE_QTY
+
+    risk_per_share = abs(entry_price - stop_loss)
+
+    if risk_per_share <= 0:
+        return MIN_TRADE_QTY
+
+    risk_amount = capital * (RISK_PER_TRADE_PERCENT / 100)
+    max_position_value = capital * (MAX_POSITION_VALUE_PERCENT / 100)
+
+    qty_by_risk = int(risk_amount // risk_per_share)
+    qty_by_value = int(max_position_value // entry_price)
+
+    quantity = max(MIN_TRADE_QTY, min(qty_by_risk, qty_by_value, MAX_ORDER_QTY))
+
+    return max(quantity, 0)
+
+
+def get_capital_management_snapshot():
+    capital = get_effective_capital()
+    open_exposure = get_open_exposure_value()
+    today_pnl = get_today_realized_pnl()
+
+    max_daily_loss_amount = capital * (MAX_DAILY_LOSS_PERCENT / 100)
+    max_portfolio_exposure = capital * (MAX_PORTFOLIO_EXPOSURE_PERCENT / 100)
+
+    return {
+        "capital": round(capital, 2),
+        "open_exposure": round(open_exposure, 2),
+        "open_exposure_percent": round((open_exposure / capital) * 100, 2) if capital else 0,
+        "today_pnl": round(today_pnl, 2),
+        "max_daily_loss_amount": round(max_daily_loss_amount, 2),
+        "max_portfolio_exposure": round(max_portfolio_exposure, 2),
+        "risk_per_trade_percent": RISK_PER_TRADE_PERCENT,
+        "max_daily_loss_percent": MAX_DAILY_LOSS_PERCENT,
+        "max_position_value_percent": MAX_POSITION_VALUE_PERCENT,
+        "max_portfolio_exposure_percent": MAX_PORTFOLIO_EXPOSURE_PERCENT,
+    }
+
+
+def risk_check(symbol, signal, quantity, confidence, entry_price=None, stop_loss=None):
     today = datetime.utcnow().date()
     today_orders = OrderLog.query.filter(db.func.date(OrderLog.created_at) == today).count()
 
     if today_orders >= MAX_TRADES_PER_DAY:
         return False, "Daily trade limit reached"
+
+    if quantity < MIN_TRADE_QTY:
+        return False, "Calculated quantity below minimum trade quantity"
+
     if quantity > MAX_ORDER_QTY:
-        return False, "Quantity exceeds limit"
+        return False, "Quantity exceeds maximum order quantity"
+
     if signal not in ["BUY", "SELL", "STRONG BUY", "STRONG SELL"]:
         return False, "Signal not actionable"
+
     if confidence < TRADE_CONFIDENCE:
         return False, f"Confidence below trade threshold {TRADE_CONFIDENCE}%"
 
-    return True, "Risk check passed"
+    capital = get_effective_capital()
+    today_pnl = get_today_realized_pnl()
+    max_daily_loss_amount = capital * (MAX_DAILY_LOSS_PERCENT / 100)
 
+    if today_pnl <= -max_daily_loss_amount:
+        return False, f"Daily max loss reached. Today P&L: ₹{today_pnl}"
+
+    open_exposure = get_open_exposure_value()
+    new_position_value = (entry_price or 0) * quantity
+    max_portfolio_exposure = capital * (MAX_PORTFOLIO_EXPOSURE_PERCENT / 100)
+
+    if open_exposure + new_position_value > max_portfolio_exposure:
+        return False, "Portfolio exposure limit reached"
+
+    if entry_price and stop_loss:
+        trade_risk = abs(entry_price - stop_loss) * quantity
+        max_trade_risk = capital * (RISK_PER_TRADE_PERCENT / 100)
+
+        if trade_risk > max_trade_risk:
+            return False, "Trade risk exceeds risk-per-trade limit"
+
+    return True, "Risk check passed"
 
 def save_trade_journal(symbol, trade_type, strategy, entry_price, current_price, levels, quantity=1, status="OPEN", notes=""):
     journal = TradeJournal(
@@ -439,7 +551,7 @@ def auto_close_open_trades():
     return {"closed": closed_count, "message": f"Auto-closed {closed_count} open trades."}
 
 
-def execute_auto_trade(symbol, signal, quantity=1, entry_price=None, confidence=0):
+def execute_auto_trade(symbol, signal, quantity=None, entry_price=None, confidence=0, stop_loss=None):
     if not AUTO_TRADE_ENABLED:
         return "SAFE MODE ENABLED\n\nAuto trading disabled."
 
@@ -450,7 +562,18 @@ def execute_auto_trade(symbol, signal, quantity=1, entry_price=None, confidence=
     else:
         return "No trade placed. Signal is not actionable."
 
-    allowed, reason = risk_check(symbol, signal, quantity, confidence)
+    if quantity is None:
+        quantity = calculate_position_size(entry_price, stop_loss)
+
+    allowed, reason = risk_check(
+        symbol=symbol,
+        signal=signal,
+        quantity=quantity,
+        confidence=confidence,
+        entry_price=entry_price,
+        stop_loss=stop_loss
+    )
+
     if not allowed:
         return f"Trade blocked.\n\nReason: {reason}"
 
@@ -473,6 +596,7 @@ AUTO TRADE EXECUTED
 Stock: {symbol}
 Signal: {signal}
 Confidence: {confidence}%
+Quantity: {quantity}
 Order ID: {order_id}
 Stop Loss: {levels["stop_loss"]}
 Target: {levels["target"]}
@@ -641,7 +765,14 @@ def autonomous_scan_job():
             alert_count = send_scanner_alerts(results)
             for item in results:
                 if item["confidence"] >= TRADE_CONFIDENCE:
-                    execute_auto_trade(symbol=item["symbol"], signal=item["signal"], quantity=1, entry_price=item["entry_price"], confidence=item["confidence"])
+                    execute_auto_trade(
+                        symbol=item["symbol"],
+                        signal=item["signal"],
+                        quantity=None,
+                        entry_price=item["entry_price"],
+                        confidence=item["confidence"],
+                        stop_loss=item["stop_loss"]
+                    )
             print(f"Autonomous scan completed. Alerts sent: {alert_count}", flush=True)
         except Exception as e:
             print("Autonomous scan failed:", str(e), flush=True)
@@ -843,8 +974,16 @@ def auto_trade():
     entry_price = round(df.iloc[-1]["close"], 2)
     current_price = round(get_live_price(symbol, entry_price), 2)
     levels = calculate_trade_levels(entry_price, strategy["signal"])
-    result = execute_auto_trade(symbol=symbol, signal=strategy["signal"], quantity=1, entry_price=entry_price, confidence=strategy["confidence"])
-    save_trade_journal(symbol=symbol, trade_type="AUTO", strategy=strategy, entry_price=entry_price, current_price=current_price, levels=levels, quantity=1, status="OPEN", notes=result)
+    calculated_qty = calculate_position_size(entry_price, levels["stop_loss"])
+    result = execute_auto_trade(
+        symbol=symbol,
+        signal=strategy["signal"],
+        quantity=calculated_qty,
+        entry_price=entry_price,
+        confidence=strategy["confidence"],
+        stop_loss=levels["stop_loss"]
+    )
+    save_trade_journal(symbol=symbol, trade_type="AUTO", strategy=strategy, entry_price=entry_price, current_price=current_price, levels=levels, quantity=calculated_qty, status="OPEN", notes=result)
     return render_template("auto_trade.html", signal=strategy["signal"], confidence=strategy["confidence"], score=strategy["score"], result=result, auto_enabled=AUTO_TRADE_ENABLED, stop_loss=levels["stop_loss"], target=levels["target"], latest_price=current_price)
 
 
@@ -911,12 +1050,14 @@ def scanner_paper_trade(symbol, action):
     current_price = round(get_live_price(symbol, entry_price), 2)
     levels = calculate_trade_levels(entry_price, action)
     journal_strategy = {"signal": action, "confidence": strategy["confidence"], "score": strategy["score"]}
-    save_trade_journal(symbol=symbol, trade_type="PAPER", strategy=journal_strategy, entry_price=entry_price, current_price=current_price, levels=levels, quantity=1, status="OPEN", notes="Paper trade from scanner")
+    calculated_qty = calculate_position_size(entry_price, levels["stop_loss"])
+    save_trade_journal(symbol=symbol, trade_type="PAPER", strategy=journal_strategy, entry_price=entry_price, current_price=current_price, levels=levels, quantity=calculated_qty, status="OPEN", notes="Paper trade from scanner")
     message = f"""
 PAPER TRADE EXECUTED
 
 Stock: {symbol}
 Action: {action}
+Quantity: {calculated_qty}
 Entry: ₹{entry_price}
 Stop Loss: ₹{levels["stop_loss"]}
 Target: ₹{levels["target"]}
@@ -938,8 +1079,16 @@ def scanner_auto_trade(symbol):
     entry_price = round(df.iloc[-1]["close"], 2)
     current_price = round(get_live_price(symbol, entry_price), 2)
     levels = calculate_trade_levels(entry_price, strategy["signal"])
-    result = execute_auto_trade(symbol=symbol, signal=strategy["signal"], quantity=1, entry_price=entry_price, confidence=strategy["confidence"])
-    save_trade_journal(symbol=symbol, trade_type="AUTO", strategy=strategy, entry_price=entry_price, current_price=current_price, levels=levels, quantity=1, status="OPEN", notes=result)
+    calculated_qty = calculate_position_size(entry_price, levels["stop_loss"])
+    result = execute_auto_trade(
+        symbol=symbol,
+        signal=strategy["signal"],
+        quantity=calculated_qty,
+        entry_price=entry_price,
+        confidence=strategy["confidence"],
+        stop_loss=levels["stop_loss"]
+    )
+    save_trade_journal(symbol=symbol, trade_type="AUTO", strategy=strategy, entry_price=entry_price, current_price=current_price, levels=levels, quantity=calculated_qty, status="OPEN", notes=result)
     alert_message = f"""
 🤖 <b>AI AUTO TRADE ALERT</b>
 
@@ -960,6 +1109,27 @@ Result:
     send_telegram_alert(alert_message)
     return render_template("scanner_trade_result.html", message=result)
 
+
+@app.route("/capital-management")
+def capital_management():
+    if not is_logged_in():
+        return redirect(url_for("login_page"))
+
+    snapshot = get_capital_management_snapshot()
+
+    message = f"""
+Capital Management Snapshot
+
+Capital: ₹{snapshot['capital']}
+Open Exposure: ₹{snapshot['open_exposure']} ({snapshot['open_exposure_percent']}%)
+Today P&L: ₹{snapshot['today_pnl']}
+Max Daily Loss: ₹{snapshot['max_daily_loss_amount']}
+Max Portfolio Exposure: ₹{snapshot['max_portfolio_exposure']}
+Risk Per Trade: {snapshot['risk_per_trade_percent']}%
+Max Position Value: {snapshot['max_position_value_percent']}%
+"""
+
+    return render_template("scanner_trade_result.html", message=message)
 
 @app.route("/send-alert")
 def send_alert():
