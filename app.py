@@ -323,6 +323,94 @@ def save_trade_journal(symbol, trade_type, strategy, entry_price, current_price,
 
     return journal
 
+def calculate_journal_pnl(signal, entry_price, current_price, quantity):
+    if signal in ["BUY", "STRONG BUY"]:
+        return round((current_price - entry_price) * quantity, 2)
+
+    if signal in ["SELL", "STRONG SELL"]:
+        return round((entry_price - current_price) * quantity, 2)
+
+    return 0
+
+
+def monitor_open_trades():
+    if not set_kite_token():
+        print("No valid Zerodha token found for trade monitor.", flush=True)
+        return {
+            "checked": 0,
+            "closed": 0,
+            "message": "No valid Zerodha token found. Please login once today."
+        }
+
+    open_trades = TradeJournal.query.filter_by(status="OPEN").all()
+
+    checked_count = 0
+    closed_count = 0
+
+    for trade in open_trades:
+        checked_count += 1
+
+        try:
+            current_price = round(
+                get_live_price(trade.symbol, trade.current_price or trade.entry_price),
+                2
+            )
+
+            trade.current_price = current_price
+            trade.pnl = calculate_journal_pnl(
+                trade.signal,
+                trade.entry_price,
+                current_price,
+                trade.quantity
+            )
+
+            exit_reason = None
+
+            if trade.signal in ["BUY", "STRONG BUY"]:
+                if trade.stop_loss and current_price <= trade.stop_loss:
+                    exit_reason = "STOP_LOSS_HIT"
+                elif trade.target and current_price >= trade.target:
+                    exit_reason = "TARGET_HIT"
+
+            elif trade.signal in ["SELL", "STRONG SELL"]:
+                if trade.stop_loss and current_price >= trade.stop_loss:
+                    exit_reason = "STOP_LOSS_HIT"
+                elif trade.target and current_price <= trade.target:
+                    exit_reason = "TARGET_HIT"
+
+            if exit_reason:
+                trade.status = exit_reason
+                closed_count += 1
+
+                alert_message = f"""
+🚨 <b>Trade Monitor Alert</b>
+
+Stock: {trade.symbol}
+Signal: {trade.signal}
+Status: {exit_reason}
+
+Entry Price: ₹{trade.entry_price}
+Current Price: ₹{current_price}
+Stop Loss: ₹{trade.stop_loss}
+Target: ₹{trade.target}
+Quantity: {trade.quantity}
+P&L: ₹{trade.pnl}
+
+Trade Journal ID: {trade.id}
+"""
+
+                send_telegram_alert(alert_message)
+
+        except Exception as e:
+            trade.notes = f"{trade.notes or ''}\nMonitor error: {str(e)}"
+
+    db.session.commit()
+
+    return {
+        "checked": checked_count,
+        "closed": closed_count,
+        "message": f"Trade monitor completed. Checked: {checked_count}, Closed: {closed_count}"
+    }
 
 def execute_auto_trade(symbol, signal, quantity=1, entry_price=None, confidence=0):
     if not AUTO_TRADE_ENABLED:
@@ -1140,6 +1228,27 @@ Result:
 
     return render_template("scanner_trade_result.html", message=result)
 
+@app.route("/monitor-trades")
+def monitor_trades():
+    if not is_logged_in():
+        return redirect(url_for("login_page"))
+
+    result = monitor_open_trades()
+
+    return render_template(
+        "scanner_trade_result.html",
+        message=result["message"]
+    )
+
+
+@app.route("/trade-journal/monitor")
+def trade_journal_monitor():
+    if not is_logged_in():
+        return redirect(url_for("login_page"))
+
+    monitor_open_trades()
+
+    return redirect(url_for("trade_journal"))
 
 @app.route("/send-alert")
 def send_alert():
@@ -1247,6 +1356,7 @@ scheduler = BackgroundScheduler()
 
 if SCHEDULER_ENABLED:
     scheduler.add_job(autonomous_scan_job, "interval", minutes=SCAN_INTERVAL_MINUTES)
+    scheduler.add_job(monitor_open_trades, "interval", minutes=MONITOR_INTERVAL_MINUTES)
     scheduler.start()
 
 
