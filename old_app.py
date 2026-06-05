@@ -45,7 +45,7 @@ TRADE_CONFIDENCE = int(os.getenv("TRADE_CONFIDENCE", 80))
 
 SCHEDULER_ENABLED = os.getenv("SCHEDULER_ENABLED", "false").lower() == "true"
 SCAN_INTERVAL_MINUTES = int(os.getenv("SCAN_INTERVAL_MINUTES", 15))
-MONITOR_INTERVAL_MINUTES = int(os.getenv("MONITOR_INTERVAL_MINUTES", 5))
+
 
 STOCK_UNIVERSE = {
     "INFY": 408065,
@@ -77,7 +77,7 @@ STOCK_UNIVERSE = {
     "JSWSTEEL": 3001089,
     "HINDALCO": 348929,
     "ULTRACEMCO": 2952193,
-    "NESTLEIND": 4598529,
+    "NESTLEIND": 4598529
 }
 
 
@@ -171,7 +171,7 @@ def send_telegram_alert(message):
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
 
     try:
-        response = requests.post(url, data=payload, timeout=10)
+        response = requests.post(url, data=payload)
         return response.json()
     except Exception as e:
         return str(e)
@@ -180,12 +180,12 @@ def send_telegram_alert(message):
 def get_historical_df(instrument_token=408065):
     end_date = datetime.now().date()
     start_date = end_date - timedelta(days=365)
+
     data = kite.historical_data(instrument_token, start_date, end_date, "day")
     return pd.DataFrame(data)
 
 
 def generate_ai_strategy(df):
-    df = df.copy()
     df["rsi"] = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi()
     df["ema20"] = df["close"].ewm(span=20).mean()
     df["ema50"] = df["close"].ewm(span=50).mean()
@@ -233,6 +233,7 @@ def generate_ai_strategy(df):
         raw_signal = "HOLD"
 
     abs_score = abs(score)
+
     if abs_score == 0:
         confidence = 45
     elif abs_score == 1:
@@ -260,7 +261,7 @@ def generate_ai_strategy(df):
         "ema50": round(latest["ema50"], 2),
         "macd": round(latest["macd"], 2),
         "macd_signal": round(latest["macd_signal"], 2),
-        "reasons": reasons,
+        "reasons": reasons
     }
 
 
@@ -277,16 +278,8 @@ def calculate_trade_levels(entry_price, signal):
 
     return {
         "stop_loss": round(stop_loss, 2) if stop_loss else None,
-        "target": round(target, 2) if target else None,
+        "target": round(target, 2) if target else None
     }
-
-
-def calculate_journal_pnl(signal, entry_price, current_price, quantity):
-    if signal in ["BUY", "STRONG BUY"]:
-        return round((current_price - entry_price) * quantity, 2)
-    if signal in ["SELL", "STRONG SELL"]:
-        return round((entry_price - current_price) * quantity, 2)
-    return 0
 
 
 def risk_check(symbol, signal, quantity, confidence):
@@ -295,10 +288,13 @@ def risk_check(symbol, signal, quantity, confidence):
 
     if today_orders >= MAX_TRADES_PER_DAY:
         return False, "Daily trade limit reached"
+
     if quantity > MAX_ORDER_QTY:
         return False, "Quantity exceeds limit"
+
     if signal not in ["BUY", "SELL", "STRONG BUY", "STRONG SELL"]:
         return False, "Signal not actionable"
+
     if confidence < TRADE_CONFIDENCE:
         return False, f"Confidence below trade threshold {TRADE_CONFIDENCE}%"
 
@@ -319,35 +315,63 @@ def save_trade_journal(symbol, trade_type, strategy, entry_price, current_price,
         quantity=quantity,
         status=status,
         pnl=0,
-        notes=notes,
+        notes=notes
     )
+
     db.session.add(journal)
     db.session.commit()
+
     return journal
+
+def calculate_journal_pnl(signal, entry_price, current_price, quantity):
+    if signal in ["BUY", "STRONG BUY"]:
+        return round((current_price - entry_price) * quantity, 2)
+
+    if signal in ["SELL", "STRONG SELL"]:
+        return round((entry_price - current_price) * quantity, 2)
+
+    return 0
 
 
 def monitor_open_trades():
     if not set_kite_token():
         print("No valid Zerodha token found for trade monitor.", flush=True)
-        return {"checked": 0, "closed": 0, "message": "No valid Zerodha token found. Please login once today."}
+        return {
+            "checked": 0,
+            "closed": 0,
+            "message": "No valid Zerodha token found. Please login once today."
+        }
 
     open_trades = TradeJournal.query.filter_by(status="OPEN").all()
+
     checked_count = 0
     closed_count = 0
 
     for trade in open_trades:
         checked_count += 1
+
         try:
-            current_price = round(get_live_price(trade.symbol, trade.current_price or trade.entry_price), 2)
+            current_price = round(
+                get_live_price(trade.symbol, trade.current_price or trade.entry_price),
+                2
+            )
+
             trade.current_price = current_price
-            trade.pnl = calculate_journal_pnl(trade.signal, trade.entry_price, current_price, trade.quantity)
+            trade.pnl = calculate_journal_pnl(
+                trade.signal,
+                trade.entry_price,
+                current_price,
+                trade.quantity
+            )
 
             exit_reason = None
+
             if trade.signal in ["BUY", "STRONG BUY"]:
                 if trade.stop_loss and current_price <= trade.stop_loss:
                     exit_reason = "STOP_LOSS_HIT"
                 elif trade.target and current_price >= trade.target:
                     exit_reason = "TARGET_HIT"
+
             elif trade.signal in ["SELL", "STRONG SELL"]:
                 if trade.stop_loss and current_price >= trade.stop_loss:
                     exit_reason = "STOP_LOSS_HIT"
@@ -357,7 +381,8 @@ def monitor_open_trades():
             if exit_reason:
                 trade.status = exit_reason
                 closed_count += 1
-                send_telegram_alert(f"""
+
+                alert_message = f"""
 🚨 <b>Trade Monitor Alert</b>
 
 Stock: {trade.symbol}
@@ -372,72 +397,20 @@ Quantity: {trade.quantity}
 P&L: ₹{trade.pnl}
 
 Trade Journal ID: {trade.id}
-""")
+"""
+
+                send_telegram_alert(alert_message)
 
         except Exception as e:
             trade.notes = f"{trade.notes or ''}\nMonitor error: {str(e)}"
 
     db.session.commit()
-    return {"checked": checked_count, "closed": closed_count, "message": f"Trade monitor completed. Checked: {checked_count}, Closed: {closed_count}"}
-
-
-def get_journal_analytics(trades):
-    total_trades = len(trades)
-    open_trades = len([t for t in trades if t.status == "OPEN"])
-    closed_trades_list = [t for t in trades if t.status != "OPEN"]
-    closed_trades = len(closed_trades_list)
-    winning_trades = [t for t in closed_trades_list if (t.pnl or 0) > 0]
-    losing_trades = [t for t in closed_trades_list if (t.pnl or 0) < 0]
-
-    total_pnl = round(sum([t.pnl or 0 for t in trades]), 2)
-    closed_pnl = round(sum([t.pnl or 0 for t in closed_trades_list]), 2)
-    avg_pnl = round(closed_pnl / closed_trades, 2) if closed_trades else 0
-    win_rate = round((len(winning_trades) / closed_trades) * 100, 2) if closed_trades else 0
-    best_trade = max(closed_trades_list, key=lambda t: t.pnl or 0) if closed_trades_list else None
-    worst_trade = min(closed_trades_list, key=lambda t: t.pnl or 0) if closed_trades_list else None
 
     return {
-        "total_trades": total_trades,
-        "open_trades": open_trades,
-        "closed_trades": closed_trades,
-        "winning_trades": len(winning_trades),
-        "losing_trades": len(losing_trades),
-        "total_pnl": total_pnl,
-        "closed_pnl": closed_pnl,
-        "avg_pnl": avg_pnl,
-        "win_rate": win_rate,
-        "best_trade": best_trade,
-        "worst_trade": worst_trade,
+        "checked": checked_count,
+        "closed": closed_count,
+        "message": f"Trade monitor completed. Checked: {checked_count}, Closed: {closed_count}"
     }
-
-
-def close_trade_by_id(trade_id):
-    trade = TradeJournal.query.get_or_404(trade_id)
-    current_price = round(get_live_price(trade.symbol, trade.current_price or trade.entry_price), 2)
-    trade.current_price = current_price
-    trade.pnl = calculate_journal_pnl(trade.signal, trade.entry_price, current_price, trade.quantity)
-    trade.status = "CLOSED"
-    db.session.commit()
-    return trade
-
-
-def auto_close_open_trades():
-    if not set_kite_token():
-        return {"closed": 0, "message": "No valid Zerodha token found. Please login once today."}
-
-    open_trades = TradeJournal.query.filter_by(status="OPEN").all()
-    closed_count = 0
-
-    for trade in open_trades:
-        current_price = round(get_live_price(trade.symbol, trade.current_price or trade.entry_price), 2)
-        trade.current_price = current_price
-        trade.pnl = calculate_journal_pnl(trade.signal, trade.entry_price, current_price, trade.quantity)
-        trade.status = "CLOSED"
-        closed_count += 1
-
-    db.session.commit()
-    return {"closed": closed_count, "message": f"Auto-closed {closed_count} open trades."}
-
 
 def execute_auto_trade(symbol, signal, quantity=1, entry_price=None, confidence=0):
     if not AUTO_TRADE_ENABLED:
@@ -451,6 +424,7 @@ def execute_auto_trade(symbol, signal, quantity=1, entry_price=None, confidence=
         return "No trade placed. Signal is not actionable."
 
     allowed, reason = risk_check(symbol, signal, quantity, confidence)
+
     if not allowed:
         return f"Trade blocked.\n\nReason: {reason}"
 
@@ -462,11 +436,21 @@ def execute_auto_trade(symbol, signal, quantity=1, entry_price=None, confidence=
             transaction_type=transaction_type,
             quantity=quantity,
             product=kite.PRODUCT_CNC,
-            order_type=kite.ORDER_TYPE_MARKET,
+            order_type=kite.ORDER_TYPE_MARKET
         )
-        db.session.add(OrderLog(symbol=symbol, transaction_type=transaction_type, quantity=quantity, status="AUTO_SUCCESS", order_id=order_id))
+
+        db.session.add(OrderLog(
+            symbol=symbol,
+            transaction_type=transaction_type,
+            quantity=quantity,
+            status="AUTO_SUCCESS",
+            order_id=order_id
+        ))
+
         db.session.commit()
+
         levels = calculate_trade_levels(entry_price, signal)
+
         return f"""
 AUTO TRADE EXECUTED
 
@@ -477,9 +461,18 @@ Order ID: {order_id}
 Stop Loss: {levels["stop_loss"]}
 Target: {levels["target"]}
 """
+
     except Exception as e:
-        db.session.add(OrderLog(symbol=symbol, transaction_type="AUTO", quantity=quantity, status="AUTO_FAILED", order_id=None))
+        db.session.add(OrderLog(
+            symbol=symbol,
+            transaction_type="AUTO",
+            quantity=quantity,
+            status="AUTO_FAILED",
+            order_id=None
+        ))
+
         db.session.commit()
+
         return f"Auto trade failed.\n\nReason: {str(e)}"
 
 
@@ -495,15 +488,33 @@ def calculate_portfolio_analytics(holdings):
         avg_price = h.get("average_price", 0)
         last_price = h.get("last_price", 0)
         pnl = h.get("pnl", 0)
+
         invested = quantity * avg_price
         value = quantity * last_price
+
         total_invested += invested
         current_value += value
         total_pnl += pnl
-        holdings_data.append({"symbol": symbol, "quantity": quantity, "average_price": round(avg_price, 2), "last_price": round(last_price, 2), "invested": round(invested, 2), "current_value": round(value, 2), "pnl": round(pnl, 2)})
+
+        holdings_data.append({
+            "symbol": symbol,
+            "quantity": quantity,
+            "average_price": round(avg_price, 2),
+            "last_price": round(last_price, 2),
+            "invested": round(invested, 2),
+            "current_value": round(value, 2),
+            "pnl": round(pnl, 2)
+        })
 
     pnl_percent = (total_pnl / total_invested) * 100 if total_invested > 0 else 0
-    return {"total_invested": round(total_invested, 2), "current_value": round(current_value, 2), "total_pnl": round(total_pnl, 2), "pnl_percent": round(pnl_percent, 2), "holdings_data": holdings_data}
+
+    return {
+        "total_invested": round(total_invested, 2),
+        "current_value": round(current_value, 2),
+        "total_pnl": round(total_pnl, 2),
+        "pnl_percent": round(pnl_percent, 2),
+        "holdings_data": holdings_data
+    }
 
 
 def get_live_price(symbol, fallback_price):
@@ -517,46 +528,95 @@ def get_live_price(symbol, fallback_price):
 def get_opportunity_score(strategy):
     confidence = strategy["confidence"]
     score = abs(strategy["score"])
+
     if confidence < MIN_CONFIDENCE:
         return 0
+
     if strategy["signal"] in ["STRONG BUY", "STRONG SELL"]:
         return confidence + score * 10 + 30
+
     if strategy["signal"] in ["BUY", "SELL"]:
         return confidence + score * 10 + 20
+
     return confidence + score * 5
 
 
 def scan_multiple_stocks(selected_symbols=None, top_n=None, min_confidence_filter=0):
     set_kite_token()
+
     symbols_to_scan = selected_symbols if selected_symbols else get_watchlist_symbols()
     scan_results = []
 
     for symbol in symbols_to_scan:
         try:
             token = STOCK_UNIVERSE.get(symbol)
+
             if not token:
                 raise Exception("Instrument token not found")
+
             df = get_historical_df(token)
             strategy = generate_ai_strategy(df)
+
             entry_price = round(df.iloc[-1]["close"], 2)
             current_price = round(get_live_price(symbol, entry_price), 2)
             levels = calculate_trade_levels(entry_price, strategy["signal"])
             opportunity_score = get_opportunity_score(strategy)
-            item = {"symbol": symbol, "price": current_price, "current_price": current_price, "entry_price": entry_price, "stop_loss": levels["stop_loss"], "target": levels["target"], "signal": strategy["signal"], "raw_signal": strategy["raw_signal"], "confidence": strategy["confidence"], "score": strategy["score"], "opportunity_score": opportunity_score, "rsi": strategy["rsi"], "ema20": strategy["ema20"], "ema50": strategy["ema50"], "reasons": ", ".join(strategy["reasons"])}
+
+            item = {
+                "symbol": symbol,
+                "price": current_price,
+                "current_price": current_price,
+                "entry_price": entry_price,
+                "stop_loss": levels["stop_loss"],
+                "target": levels["target"],
+                "signal": strategy["signal"],
+                "raw_signal": strategy["raw_signal"],
+                "confidence": strategy["confidence"],
+                "score": strategy["score"],
+                "opportunity_score": opportunity_score,
+                "rsi": strategy["rsi"],
+                "ema20": strategy["ema20"],
+                "ema50": strategy["ema50"],
+                "reasons": ", ".join(strategy["reasons"])
+            }
+
             if item["confidence"] >= min_confidence_filter:
                 scan_results.append(item)
+
         except Exception as e:
-            scan_results.append({"symbol": symbol, "price": "Error", "current_price": "Error", "entry_price": "Error", "stop_loss": "-", "target": "-", "signal": "ERROR", "raw_signal": "ERROR", "confidence": 0, "score": 0, "opportunity_score": 0, "rsi": "-", "ema20": "-", "ema50": "-", "reasons": str(e)})
+            scan_results.append({
+                "symbol": symbol,
+                "price": "Error",
+                "current_price": "Error",
+                "entry_price": "Error",
+                "stop_loss": "-",
+                "target": "-",
+                "signal": "ERROR",
+                "raw_signal": "ERROR",
+                "confidence": 0,
+                "score": 0,
+                "opportunity_score": 0,
+                "rsi": "-",
+                "ema20": "-",
+                "ema50": "-",
+                "reasons": str(e)
+            })
 
     scan_results = sorted(scan_results, key=lambda x: x["opportunity_score"], reverse=True)
-    return scan_results[:top_n] if top_n else scan_results
+
+    if top_n:
+        scan_results = scan_results[:top_n]
+
+    return scan_results
 
 
 def send_scanner_alerts(results):
     alert_count = 0
+
     for item in results:
         if item["confidence"] < MIN_CONFIDENCE:
             continue
+
         message = f"""
 🚨 <b>Top AI Stock Alert</b>
 
@@ -575,8 +635,10 @@ Target Price: ₹{item["target"]}
 Reason:
 {item["reasons"]}
 """
+
         send_telegram_alert(message)
         alert_count += 1
+
     return alert_count
 
 
@@ -588,6 +650,7 @@ def run_backtest_v2(df, initial_capital=100000):
     equity_curve = []
     peak_equity = initial_capital
     max_drawdown = 0
+
     df = df.copy()
     df["rsi"] = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi()
     df["ema20"] = df["close"].ewm(span=20).mean()
@@ -596,11 +659,14 @@ def run_backtest_v2(df, initial_capital=100000):
     for i in range(50, len(df)):
         row = df.iloc[i]
         price = row["close"]
+
         current_equity = capital + (position * price)
         peak_equity = max(peak_equity, current_equity)
         drawdown = ((peak_equity - current_equity) / peak_equity) * 100
         max_drawdown = max(max_drawdown, drawdown)
+
         equity_curve.append({"date": row["date"], "equity": round(current_equity, 2)})
+
         buy_signal = row["rsi"] < 35 and row["ema20"] > row["ema50"] and position == 0
         sell_signal = row["rsi"] > 65 and position > 0
         stop_loss_hit = position > 0 and price <= entry_price * 0.99
@@ -608,15 +674,23 @@ def run_backtest_v2(df, initial_capital=100000):
 
         if buy_signal:
             quantity = int(capital // price)
+
             if quantity > 0:
                 position = quantity
                 entry_price = price
                 capital -= quantity * price
                 trades.append({"date": row["date"], "action": "BUY", "price": round(price, 2), "quantity": quantity, "pnl": 0, "reason": "AI BUY Signal"})
+
         elif sell_signal or stop_loss_hit or target_hit:
             capital += position * price
             pnl = (price - entry_price) * position
-            reason = "Stop Loss Hit" if stop_loss_hit else "Target Hit" if target_hit else "AI SELL Signal"
+
+            reason = "AI SELL Signal"
+            if stop_loss_hit:
+                reason = "Stop Loss Hit"
+            elif target_hit:
+                reason = "Target Hit"
+
             trades.append({"date": row["date"], "action": "SELL", "price": round(price, 2), "quantity": position, "pnl": round(pnl, 2), "reason": reason})
             position = 0
             entry_price = 0
@@ -624,10 +698,22 @@ def run_backtest_v2(df, initial_capital=100000):
     final_value = capital + (position * df.iloc[-1]["close"])
     total_pnl = final_value - initial_capital
     roi = (total_pnl / initial_capital) * 100
+
     sell_trades = [t for t in trades if t["action"] == "SELL"]
     winning_trades = [t for t in sell_trades if t["pnl"] > 0]
     win_rate = (len(winning_trades) / len(sell_trades)) * 100 if sell_trades else 0
-    return {"initial_capital": initial_capital, "final_value": round(final_value, 2), "total_pnl": round(total_pnl, 2), "roi": round(roi, 2), "total_trades": len(trades), "win_rate": round(win_rate, 2), "max_drawdown": round(max_drawdown, 2), "trades": trades, "equity_curve": equity_curve}
+
+    return {
+        "initial_capital": initial_capital,
+        "final_value": round(final_value, 2),
+        "total_pnl": round(total_pnl, 2),
+        "roi": round(roi, 2),
+        "total_trades": len(trades),
+        "win_rate": round(win_rate, 2),
+        "max_drawdown": round(max_drawdown, 2),
+        "trades": trades,
+        "equity_curve": equity_curve
+    }
 
 
 def autonomous_scan_job():
@@ -636,13 +722,22 @@ def autonomous_scan_job():
             if not set_kite_token():
                 print("No valid Zerodha token found. Please login once today.", flush=True)
                 return
-            monitor_open_trades()
+
             results = scan_multiple_stocks(top_n=5, min_confidence_filter=MIN_CONFIDENCE)
             alert_count = send_scanner_alerts(results)
+
             for item in results:
                 if item["confidence"] >= TRADE_CONFIDENCE:
-                    execute_auto_trade(symbol=item["symbol"], signal=item["signal"], quantity=1, entry_price=item["entry_price"], confidence=item["confidence"])
+                    execute_auto_trade(
+                        symbol=item["symbol"],
+                        signal=item["signal"],
+                        quantity=1,
+                        entry_price=item["entry_price"],
+                        confidence=item["confidence"]
+                    )
+
             print(f"Autonomous scan completed. Alerts sent: {alert_count}", flush=True)
+
         except Exception as e:
             print("Autonomous scan failed:", str(e), flush=True)
 
@@ -651,19 +746,24 @@ def autonomous_scan_job():
 def login_page():
     if is_logged_in():
         return redirect(url_for("dashboard"))
+
     return render_template("login.html", login_url=kite.login_url())
 
 
 @app.route("/login")
 def login():
     request_token = request.args.get("request_token")
+
     if not request_token:
         return "Login failed. Request token not found."
+
     data = kite.generate_session(request_token, api_secret=api_secret)
     access_token = data["access_token"]
+
     session["access_token"] = access_token
     db.session.add(TokenStore(access_token=access_token))
     db.session.commit()
+
     return redirect(url_for("dashboard"))
 
 
@@ -677,6 +777,7 @@ def logout():
 def dashboard():
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     return render_template("dashboard.html")
 
 
@@ -684,50 +785,100 @@ def dashboard():
 def market():
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     set_kite_token()
+
     watchlist_symbols = get_watchlist_symbols()
     selected_symbol = request.args.get("symbol", watchlist_symbols[0] if watchlist_symbols else "INFY").upper()
+
     if selected_symbol not in STOCK_UNIVERSE:
         selected_symbol = "INFY"
-    df = get_historical_df(STOCK_UNIVERSE[selected_symbol])
+
+    selected_token = STOCK_UNIVERSE[selected_symbol]
+
+    df = get_historical_df(selected_token)
     strategy = generate_ai_strategy(df)
+
     entry_price = round(df.iloc[-1]["close"], 2)
     live_price = round(get_live_price(selected_symbol, entry_price), 2)
     levels = calculate_trade_levels(entry_price, strategy["signal"])
+
     market_data = []
+
     quote_symbols = [f"NSE:{symbol}" for symbol in watchlist_symbols[:8]]
 
     try:
         quotes = kite.quote(quote_symbols)
+
         for symbol in watchlist_symbols[:8]:
             key = f"NSE:{symbol}"
             price = quotes[key]["last_price"]
-            market_data.append({"symbol": symbol, "price": price, "signal": "HOLD" if price > 1000 else "WATCH"})
-            db.session.add(SignalLog(symbol=symbol, price=price, signal=strategy["signal"], confidence=strategy["confidence"], score=strategy["score"]))
+
+            market_data.append({
+                "symbol": symbol,
+                "price": price,
+                "signal": "HOLD" if price > 1000 else "WATCH"
+            })
+
+            db.session.add(SignalLog(
+                symbol=symbol,
+                price=price,
+                signal=strategy["signal"],
+                confidence=strategy["confidence"],
+                score=strategy["score"]
+            ))
+
         db.session.commit()
     except Exception:
         pass
 
     fig = go.Figure()
+
     fig.add_trace(go.Candlestick(x=df["date"], open=df["open"], high=df["high"], low=df["low"], close=df["close"], name="Candlestick"))
     fig.add_trace(go.Scatter(x=df["date"], y=df["ema20"], mode="lines", name="EMA20"))
     fig.add_trace(go.Scatter(x=df["date"], y=df["ema50"], mode="lines", name="EMA50"))
     fig.add_trace(go.Scatter(x=[datetime.now()], y=[live_price], mode="markers+text", name="Live Price", text=[f"Live ₹{live_price}"], textposition="top center"))
     fig.update_layout(title=f"{selected_symbol} AI Trading Chart - Live Price ₹{live_price}", height=550)
+
     chart = plot(fig, output_type="div")
-    return render_template("market.html", watchlist_symbols=watchlist_symbols, selected_symbol=selected_symbol, latest_rsi=strategy["rsi"], latest_ema20=strategy["ema20"], latest_ema50=strategy["ema50"], macd=strategy["macd"], macd_signal=strategy["macd_signal"], ai_signal=strategy["signal"], confidence=strategy["confidence"], score=strategy["score"], reasons=strategy["reasons"], current_price=live_price, entry_price=entry_price, stop_loss=levels["stop_loss"], target=levels["target"], gpt_reasoning="AI signal generated using RSI, EMA20, EMA50, MACD, and Bollinger Bands.", market_data=market_data, chart=chart)
+
+    return render_template(
+        "market.html",
+        watchlist_symbols=watchlist_symbols,
+        selected_symbol=selected_symbol,
+        latest_rsi=strategy["rsi"],
+        latest_ema20=strategy["ema20"],
+        latest_ema50=strategy["ema50"],
+        macd=strategy["macd"],
+        macd_signal=strategy["macd_signal"],
+        ai_signal=strategy["signal"],
+        confidence=strategy["confidence"],
+        score=strategy["score"],
+        reasons=strategy["reasons"],
+        current_price=live_price,
+        entry_price=entry_price,
+        stop_loss=levels["stop_loss"],
+        target=levels["target"],
+        gpt_reasoning="AI signal generated using RSI, EMA20, EMA50, MACD, and Bollinger Bands.",
+        market_data=market_data,
+        chart=chart
+    )
 
 
 @app.route("/portfolio")
 def portfolio():
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     set_kite_token()
+
     profile = kite.profile()
     holdings = kite.holdings()
     margins = kite.margins()
     cash = margins["equity"]["available"]["cash"]
+
     analytics = calculate_portfolio_analytics(holdings)
+
     if analytics["holdings_data"]:
         allocation_fig = go.Figure()
         allocation_fig.add_trace(go.Pie(labels=[h["symbol"] for h in analytics["holdings_data"]], values=[h["current_value"] for h in analytics["holdings_data"]], hole=0.4))
@@ -735,6 +886,7 @@ def portfolio():
         allocation_chart = plot(allocation_fig, output_type="div")
     else:
         allocation_chart = "<p>No holdings available.</p>"
+
     return render_template("portfolio.html", profile=profile, cash=cash, analytics=analytics, allocation_chart=allocation_chart)
 
 
@@ -742,22 +894,37 @@ def portfolio():
 def orders():
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     set_kite_token()
     message = None
+
     if request.method == "POST":
         symbol = request.form.get("symbol").upper()
         transaction_type = request.form.get("transaction_type")
         quantity = int(request.form.get("quantity"))
+
         try:
-            order_id = kite.place_order(variety=kite.VARIETY_REGULAR, exchange=kite.EXCHANGE_NSE, tradingsymbol=symbol, transaction_type=transaction_type, quantity=quantity, product=kite.PRODUCT_CNC, order_type=kite.ORDER_TYPE_MARKET)
+            order_id = kite.place_order(
+                variety=kite.VARIETY_REGULAR,
+                exchange=kite.EXCHANGE_NSE,
+                tradingsymbol=symbol,
+                transaction_type=transaction_type,
+                quantity=quantity,
+                product=kite.PRODUCT_CNC,
+                order_type=kite.ORDER_TYPE_MARKET
+            )
+
             message = f"Order placed successfully. Order ID: {order_id}"
             status = "SUCCESS"
+
         except Exception as e:
             order_id = None
             message = f"Order failed: {str(e)}"
             status = "FAILED"
+
         db.session.add(OrderLog(symbol=symbol, transaction_type=transaction_type, quantity=quantity, status=status, order_id=order_id))
         db.session.commit()
+
     return render_template("orders.html", message=message)
 
 
@@ -765,8 +932,10 @@ def orders():
 def history():
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     signals = SignalLog.query.order_by(SignalLog.created_at.desc()).limit(50).all()
     orders = OrderLog.query.order_by(OrderLog.created_at.desc()).limit(50).all()
+
     return render_template("history.html", signals=signals, orders=orders)
 
 
@@ -774,20 +943,47 @@ def history():
 def trade_journal():
     if not is_logged_in():
         return redirect(url_for("login_page"))
-    monitor = request.args.get("monitor", "false") == "true"
-    if monitor:
-        monitor_open_trades()
-    trades = TradeJournal.query.order_by(TradeJournal.created_at.desc()).limit(200).all()
-    analytics = get_journal_analytics(trades)
-    return render_template("trade_journal.html", trades=trades, analytics=analytics)
+
+    trades = TradeJournal.query.order_by(TradeJournal.created_at.desc()).limit(100).all()
+
+    total_trades = len(trades)
+    open_trades = len([t for t in trades if t.status == "OPEN"])
+    closed_trades = len([t for t in trades if t.status == "CLOSED"])
+    total_pnl = sum([t.pnl or 0 for t in trades])
+
+    return render_template(
+        "trade_journal.html",
+        trades=trades,
+        total_trades=total_trades,
+        open_trades=open_trades,
+        closed_trades=closed_trades,
+        total_pnl=round(total_pnl, 2)
+    )
 
 
 @app.route("/trade-journal/close/<int:trade_id>")
 def close_trade_journal(trade_id):
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     set_kite_token()
-    close_trade_by_id(trade_id)
+
+    trade = TradeJournal.query.get_or_404(trade_id)
+    current_price = round(get_live_price(trade.symbol, trade.current_price or trade.entry_price), 2)
+
+    if trade.signal in ["BUY", "STRONG BUY"]:
+        pnl = (current_price - trade.entry_price) * trade.quantity
+    elif trade.signal in ["SELL", "STRONG SELL"]:
+        pnl = (trade.entry_price - current_price) * trade.quantity
+    else:
+        pnl = 0
+
+    trade.current_price = current_price
+    trade.pnl = round(pnl, 2)
+    trade.status = "CLOSED"
+
+    db.session.commit()
+
     return redirect(url_for("trade_journal"))
 
 
@@ -795,40 +991,19 @@ def close_trade_journal(trade_id):
 def delete_trade_journal(trade_id):
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     trade = TradeJournal.query.get_or_404(trade_id)
     db.session.delete(trade)
     db.session.commit()
+
     return redirect(url_for("trade_journal"))
-
-
-@app.route("/trade-journal/auto-close-all")
-def trade_journal_auto_close_all():
-    if not is_logged_in():
-        return redirect(url_for("login_page"))
-    auto_close_open_trades()
-    return redirect(url_for("trade_journal"))
-
-
-@app.route("/trade-journal/monitor")
-def trade_journal_monitor():
-    if not is_logged_in():
-        return redirect(url_for("login_page"))
-    monitor_open_trades()
-    return redirect(url_for("trade_journal"))
-
-
-@app.route("/monitor-trades")
-def monitor_trades():
-    if not is_logged_in():
-        return redirect(url_for("login_page"))
-    result = monitor_open_trades()
-    return render_template("scanner_trade_result.html", message=result["message"])
 
 
 @app.route("/paper-trading")
 def paper_trading():
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     return render_template("paper_trading.html")
 
 
@@ -836,29 +1011,65 @@ def paper_trading():
 def auto_trade():
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     set_kite_token()
+
     symbol = "INFY"
     df = get_historical_df(STOCK_UNIVERSE[symbol])
     strategy = generate_ai_strategy(df)
+
     entry_price = round(df.iloc[-1]["close"], 2)
     current_price = round(get_live_price(symbol, entry_price), 2)
     levels = calculate_trade_levels(entry_price, strategy["signal"])
-    result = execute_auto_trade(symbol=symbol, signal=strategy["signal"], quantity=1, entry_price=entry_price, confidence=strategy["confidence"])
-    save_trade_journal(symbol=symbol, trade_type="AUTO", strategy=strategy, entry_price=entry_price, current_price=current_price, levels=levels, quantity=1, status="OPEN", notes=result)
-    return render_template("auto_trade.html", signal=strategy["signal"], confidence=strategy["confidence"], score=strategy["score"], result=result, auto_enabled=AUTO_TRADE_ENABLED, stop_loss=levels["stop_loss"], target=levels["target"], latest_price=current_price)
+
+    result = execute_auto_trade(
+        symbol=symbol,
+        signal=strategy["signal"],
+        quantity=1,
+        entry_price=entry_price,
+        confidence=strategy["confidence"]
+    )
+
+    save_trade_journal(
+        symbol=symbol,
+        trade_type="AUTO",
+        strategy=strategy,
+        entry_price=entry_price,
+        current_price=current_price,
+        levels=levels,
+        quantity=1,
+        status="OPEN",
+        notes=result
+    )
+
+    return render_template(
+        "auto_trade.html",
+        signal=strategy["signal"],
+        confidence=strategy["confidence"],
+        score=strategy["score"],
+        result=result,
+        auto_enabled=AUTO_TRADE_ENABLED,
+        stop_loss=levels["stop_loss"],
+        target=levels["target"],
+        latest_price=current_price
+    )
 
 
 @app.route("/backtest")
 def backtest():
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     set_kite_token()
+
     df = get_historical_df()
     result = run_backtest_v2(df)
+
     equity_fig = go.Figure()
     equity_fig.add_trace(go.Scatter(x=[e["date"] for e in result["equity_curve"]], y=[e["equity"] for e in result["equity_curve"]], mode="lines", name="Equity Curve"))
     equity_fig.update_layout(title="Backtest Equity Curve", xaxis_title="Date", yaxis_title="Portfolio Value", height=450)
     equity_chart = plot(equity_fig, output_type="div")
+
     return render_template("backtest.html", result=result, equity_chart=equity_chart)
 
 
@@ -866,16 +1077,20 @@ def backtest():
 def scanner():
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     selected_symbols = request.args.getlist("symbols")
     min_confidence_filter = request.args.get("min_confidence", "")
+
     try:
         min_confidence_filter_value = int(min_confidence_filter) if min_confidence_filter else 0
     except ValueError:
         min_confidence_filter_value = 0
+
     if selected_symbols:
         results = scan_multiple_stocks(selected_symbols=selected_symbols, min_confidence_filter=min_confidence_filter_value)
     else:
         results = scan_multiple_stocks(top_n=5, min_confidence_filter=min_confidence_filter_value)
+
     return render_template("scanner.html", results=results, stock_universe=STOCK_UNIVERSE, selected_symbols=selected_symbols, min_confidence=min_confidence_filter)
 
 
@@ -883,17 +1098,22 @@ def scanner():
 def scanner_send_alerts():
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     selected_symbols = request.args.getlist("symbols")
     min_confidence_filter = request.args.get("min_confidence", "")
+
     try:
         min_confidence_filter_value = int(min_confidence_filter) if min_confidence_filter else MIN_CONFIDENCE
     except ValueError:
         min_confidence_filter_value = MIN_CONFIDENCE
+
     if selected_symbols:
         results = scan_multiple_stocks(selected_symbols=selected_symbols, min_confidence_filter=min_confidence_filter_value)
     else:
         results = scan_multiple_stocks(top_n=5, min_confidence_filter=min_confidence_filter_value)
+
     alert_count = send_scanner_alerts(results)
+
     return render_template("scanner_trade_result.html", message=f"High-confidence alerts sent successfully. Total alerts: {alert_count}")
 
 
@@ -901,17 +1121,38 @@ def scanner_send_alerts():
 def scanner_paper_trade(symbol, action):
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     set_kite_token()
+
     token = STOCK_UNIVERSE.get(symbol)
     if not token:
         return "Invalid stock"
+
     df = get_historical_df(token)
     strategy = generate_ai_strategy(df)
+
     entry_price = round(df.iloc[-1]["close"], 2)
     current_price = round(get_live_price(symbol, entry_price), 2)
     levels = calculate_trade_levels(entry_price, action)
-    journal_strategy = {"signal": action, "confidence": strategy["confidence"], "score": strategy["score"]}
-    save_trade_journal(symbol=symbol, trade_type="PAPER", strategy=journal_strategy, entry_price=entry_price, current_price=current_price, levels=levels, quantity=1, status="OPEN", notes="Paper trade from scanner")
+
+    journal_strategy = {
+        "signal": action,
+        "confidence": strategy["confidence"],
+        "score": strategy["score"]
+    }
+
+    save_trade_journal(
+        symbol=symbol,
+        trade_type="PAPER",
+        strategy=journal_strategy,
+        entry_price=entry_price,
+        current_price=current_price,
+        levels=levels,
+        quantity=1,
+        status="OPEN",
+        notes="Paper trade from scanner"
+    )
+
     message = f"""
 PAPER TRADE EXECUTED
 
@@ -921,7 +1162,9 @@ Entry: ₹{entry_price}
 Stop Loss: ₹{levels["stop_loss"]}
 Target: ₹{levels["target"]}
 """
+
     send_telegram_alert(message)
+
     return render_template("scanner_trade_result.html", message=message)
 
 
@@ -929,17 +1172,40 @@ Target: ₹{levels["target"]}
 def scanner_auto_trade(symbol):
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     set_kite_token()
+
     token = STOCK_UNIVERSE.get(symbol)
     if not token:
         return "Invalid stock"
+
     df = get_historical_df(token)
     strategy = generate_ai_strategy(df)
+
     entry_price = round(df.iloc[-1]["close"], 2)
     current_price = round(get_live_price(symbol, entry_price), 2)
     levels = calculate_trade_levels(entry_price, strategy["signal"])
-    result = execute_auto_trade(symbol=symbol, signal=strategy["signal"], quantity=1, entry_price=entry_price, confidence=strategy["confidence"])
-    save_trade_journal(symbol=symbol, trade_type="AUTO", strategy=strategy, entry_price=entry_price, current_price=current_price, levels=levels, quantity=1, status="OPEN", notes=result)
+
+    result = execute_auto_trade(
+        symbol=symbol,
+        signal=strategy["signal"],
+        quantity=1,
+        entry_price=entry_price,
+        confidence=strategy["confidence"]
+    )
+
+    save_trade_journal(
+        symbol=symbol,
+        trade_type="AUTO",
+        strategy=strategy,
+        entry_price=entry_price,
+        current_price=current_price,
+        levels=levels,
+        quantity=1,
+        status="OPEN",
+        notes=result
+    )
+
     alert_message = f"""
 🤖 <b>AI AUTO TRADE ALERT</b>
 
@@ -957,16 +1223,41 @@ Target Price: ₹{levels["target"]}
 Result:
 {result}
 """
+
     send_telegram_alert(alert_message)
+
     return render_template("scanner_trade_result.html", message=result)
 
+@app.route("/monitor-trades")
+def monitor_trades():
+    if not is_logged_in():
+        return redirect(url_for("login_page"))
+
+    result = monitor_open_trades()
+
+    return render_template(
+        "scanner_trade_result.html",
+        message=result["message"]
+    )
+
+
+@app.route("/trade-journal/monitor")
+def trade_journal_monitor():
+    if not is_logged_in():
+        return redirect(url_for("login_page"))
+
+    monitor_open_trades()
+
+    return redirect(url_for("trade_journal"))
 
 @app.route("/send-alert")
 def send_alert():
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     results = scan_multiple_stocks(top_n=5, min_confidence_filter=MIN_CONFIDENCE)
     alert_count = send_scanner_alerts(results)
+
     return f"High-confidence Telegram Alerts Sent: {alert_count}"
 
 
@@ -974,7 +1265,9 @@ def send_alert():
 def run_scheduler_now():
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     autonomous_scan_job()
+
     return render_template("scanner_trade_result.html", message="Autonomous high-confidence scheduler job executed manually.")
 
 
@@ -982,22 +1275,28 @@ def run_scheduler_now():
 def watchlist():
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     message = None
+
     if request.method == "POST":
         symbol = request.form.get("symbol", "").upper().strip()
+
         if not symbol:
             message = "Please select a valid stock."
         elif symbol not in STOCK_UNIVERSE:
             message = "Stock not found in available universe."
         else:
             existing = WatchlistStock.query.filter_by(symbol=symbol).first()
+
             if existing:
                 message = f"{symbol} is already in watchlist."
             else:
                 db.session.add(WatchlistStock(symbol=symbol, instrument_token=STOCK_UNIVERSE[symbol]))
                 db.session.commit()
                 message = f"{symbol} added to watchlist successfully."
+
     watchlist_stocks = WatchlistStock.query.order_by(WatchlistStock.created_at.desc()).all()
+
     return render_template("watchlist.html", stock_universe=STOCK_UNIVERSE, watchlist_stocks=watchlist_stocks, message=message)
 
 
@@ -1005,10 +1304,12 @@ def watchlist():
 def delete_watchlist_stock(symbol):
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     stock = WatchlistStock.query.filter_by(symbol=symbol).first()
     if stock:
         db.session.delete(stock)
         db.session.commit()
+
     return redirect(url_for("watchlist"))
 
 
@@ -1016,16 +1317,22 @@ def delete_watchlist_stock(symbol):
 def api_live_prices():
     if not is_logged_in():
         return {"error": "not_logged_in"}, 401
+
     set_kite_token()
+
     watchlist_symbols = get_watchlist_symbols()
     quote_symbols = [f"NSE:{symbol}" for symbol in watchlist_symbols]
+
     try:
         quotes = kite.quote(quote_symbols)
         data = {}
+
         for symbol in watchlist_symbols:
             key = f"NSE:{symbol}"
             data[symbol] = quotes[key]["last_price"]
+
         return data
+
     except Exception as e:
         return {"error": str(e)}, 500
 
@@ -1034,7 +1341,9 @@ def api_live_prices():
 def realtime():
     if not is_logged_in():
         return redirect(url_for("login_page"))
+
     watchlist_symbols = get_watchlist_symbols()
+
     return render_template("realtime.html", watchlist_symbols=watchlist_symbols)
 
 

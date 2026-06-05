@@ -2,75 +2,71 @@
 
 {% block content %}
 
-<h2 class="mb-4">AI Trade Journal</h2>
+<h2 class="mb-4">AI Trade Journal Analytics</h2>
+
+<div class="mb-3">
+    <a href="/trade-journal/monitor" class="btn btn-primary">Refresh Monitor</a>
+    <a href="/trade-journal/auto-close-all" class="btn btn-danger">Auto-Close All Open Trades</a>
+</div>
 
 <div class="row g-4 mb-4">
+    <div class="col-md-3"><div class="card p-3 shadow-sm"><h6>Total Trades</h6><h3>{{ analytics.total_trades }}</h3></div></div>
+    <div class="col-md-3"><div class="card p-3 shadow-sm"><h6>Open Trades</h6><h3>{{ analytics.open_trades }}</h3></div></div>
+    <div class="col-md-3"><div class="card p-3 shadow-sm"><h6>Closed Trades</h6><h3>{{ analytics.closed_trades }}</h3></div></div>
+    <div class="col-md-3"><div class="card p-3 shadow-sm"><h6>Win Rate</h6><h3>{{ analytics.win_rate }}%</h3></div></div>
+</div>
 
-    <div class="col-md-3">
-        <div class="card p-3 shadow-sm">
-            <h6>Total Trades</h6>
-            <h3>{{ total_trades }}</h3>
-        </div>
-    </div>
-
-    <div class="col-md-3">
-        <div class="card p-3 shadow-sm">
-            <h6>Open Trades</h6>
-            <h3>{{ open_trades }}</h3>
-        </div>
-    </div>
-
-    <div class="col-md-3">
-        <div class="card p-3 shadow-sm">
-            <h6>Closed Trades</h6>
-            <h3>{{ closed_trades }}</h3>
-        </div>
-    </div>
-
+<div class="row g-4 mb-4">
     <div class="col-md-3">
         <div class="card p-3 shadow-sm">
             <h6>Total P&L</h6>
+            {% if analytics.total_pnl >= 0 %}<h3 class="text-success">₹{{ analytics.total_pnl }}</h3>{% else %}<h3 class="text-danger">₹{{ analytics.total_pnl }}</h3>{% endif %}
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card p-3 shadow-sm">
+            <h6>Average Closed P&L</h6>
+            {% if analytics.avg_pnl >= 0 %}<h3 class="text-success">₹{{ analytics.avg_pnl }}</h3>{% else %}<h3 class="text-danger">₹{{ analytics.avg_pnl }}</h3>{% endif %}
+        </div>
+    </div>
+    <div class="col-md-3"><div class="card p-3 shadow-sm"><h6>Winning Trades</h6><h3 class="text-success">{{ analytics.winning_trades }}</h3></div></div>
+    <div class="col-md-3"><div class="card p-3 shadow-sm"><h6>Losing Trades</h6><h3 class="text-danger">{{ analytics.losing_trades }}</h3></div></div>
+</div>
 
-            {% if total_pnl >= 0 %}
-                <h3 class="text-success">₹{{ total_pnl }}</h3>
+<div class="row g-4 mb-4">
+    <div class="col-md-6">
+        <div class="card p-3 shadow-sm">
+            <h6>Best Trade</h6>
+            {% if analytics.best_trade %}
+                <h4 class="text-success">{{ analytics.best_trade.symbol }} | ₹{{ analytics.best_trade.pnl }}</h4>
+                <small>{{ analytics.best_trade.signal }} | Entry ₹{{ analytics.best_trade.entry_price }} | Current ₹{{ analytics.best_trade.current_price }}</small>
             {% else %}
-                <h3 class="text-danger">₹{{ total_pnl }}</h3>
+                <h4>-</h4>
             {% endif %}
         </div>
     </div>
-
+    <div class="col-md-6">
+        <div class="card p-3 shadow-sm">
+            <h6>Worst Trade</h6>
+            {% if analytics.worst_trade %}
+                <h4 class="text-danger">{{ analytics.worst_trade.symbol }} | ₹{{ analytics.worst_trade.pnl }}</h4>
+                <small>{{ analytics.worst_trade.signal }} | Entry ₹{{ analytics.worst_trade.entry_price }} | Current ₹{{ analytics.worst_trade.current_price }}</small>
+            {% else %}
+                <h4>-</h4>
+            {% endif %}
+        </div>
+    </div>
 </div>
 
 <div class="card shadow-sm">
-    <div class="card-header bg-dark text-white">
-        Trade Journal Records
-    </div>
-
+    <div class="card-header bg-dark text-white">Trade Journal Records</div>
     <div class="card-body">
-
         {% if trades %}
-
         <table class="table table-striped table-hover">
-
             <tr>
-                <th>ID</th>
-                <th>Stock</th>
-                <th>Type</th>
-                <th>Signal</th>
-                <th>Confidence</th>
-                <th>Entry</th>
-                <th>Current</th>
-                <th>Stop Loss</th>
-                <th>Target</th>
-                <th>Qty</th>
-                <th>Status</th>
-                <th>P&L</th>
-                <th>Date</th>
-                <th>Actions</th>
+                <th>ID</th><th>Stock</th><th>Type</th><th>Signal</th><th>Confidence</th><th>Entry</th><th>Current</th><th>SL</th><th>Target</th><th>Qty</th><th>Status</th><th>P&L</th><th>Date</th><th>Actions</th>
             </tr>
-
             {% for trade in trades %}
-
             <tr>
                 <td>{{ trade.id }}</td>
                 <td><b>{{ trade.symbol }}</b></td>
@@ -82,52 +78,25 @@
                 <td>₹{{ trade.stop_loss }}</td>
                 <td>₹{{ trade.target }}</td>
                 <td>{{ trade.quantity }}</td>
-
                 <td>
-                    {% if trade.status == "OPEN" %}
-                        <span class="badge bg-warning text-dark">OPEN</span>
-                    {% elif trade.status == "CLOSED" %}
-                        <span class="badge bg-success">CLOSED</span>
-                    {% else %}
-                        <span class="badge bg-secondary">{{ trade.status }}</span>
-                    {% endif %}
+                    {% if trade.status == "OPEN" %}<span class="badge bg-warning text-dark">OPEN</span>
+                    {% elif trade.status == "TARGET_HIT" %}<span class="badge bg-success">TARGET HIT</span>
+                    {% elif trade.status == "STOP_LOSS_HIT" %}<span class="badge bg-danger">STOP LOSS HIT</span>
+                    {% elif trade.status == "CLOSED" %}<span class="badge bg-primary">CLOSED</span>
+                    {% else %}<span class="badge bg-secondary">{{ trade.status }}</span>{% endif %}
                 </td>
-
-                <td>
-                    {% if trade.pnl >= 0 %}
-                        <span class="text-success">₹{{ trade.pnl }}</span>
-                    {% else %}
-                        <span class="text-danger">₹{{ trade.pnl }}</span>
-                    {% endif %}
-                </td>
-
+                <td>{% if trade.pnl >= 0 %}<span class="text-success">₹{{ trade.pnl }}</span>{% else %}<span class="text-danger">₹{{ trade.pnl }}</span>{% endif %}</td>
                 <td>{{ trade.created_at }}</td>
-
                 <td>
-                    {% if trade.status == "OPEN" %}
-                        <a href="/trade-journal/close/{{ trade.id }}" class="btn btn-success btn-sm">
-                            Close
-                        </a>
-                    {% endif %}
-
-                    <a href="/trade-journal/delete/{{ trade.id }}" class="btn btn-danger btn-sm">
-                        Delete
-                    </a>
+                    {% if trade.status == "OPEN" %}<a href="/trade-journal/close/{{ trade.id }}" class="btn btn-success btn-sm">Close</a>{% endif %}
+                    <a href="/trade-journal/delete/{{ trade.id }}" class="btn btn-danger btn-sm">Delete</a>
                 </td>
             </tr>
-
             {% endfor %}
-
         </table>
-
         {% else %}
-
-        <div class="alert alert-warning">
-            No trade journal records found yet.
-        </div>
-
+        <div class="alert alert-warning">No trade journal records found yet.</div>
         {% endif %}
-
     </div>
 </div>
 
