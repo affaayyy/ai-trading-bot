@@ -2,46 +2,74 @@
 
 {% block content %}
 
-<h2 class="mb-4">Real-Time Live Market Dashboard</h2>
+<h2 class="mb-4">Dynamic Watchlist Live Prices</h2>
 
 <div class="alert alert-success">
-    Live prices auto-refresh every 5 seconds.
+    Live prices auto-refresh every 5 seconds using your Watchlist.
+</div>
+
+<div class="mb-3">
+    <a href="/watchlist" class="btn btn-primary">
+        Manage Watchlist
+    </a>
 </div>
 
 <div class="card shadow-sm">
     <div class="card-header bg-dark text-white">
-        Live Prices
+        Live Watchlist Prices
     </div>
 
     <div class="card-body">
-        <table class="table table-striped">
+
+        {% if watchlist_symbols %}
+
+        <table class="table table-striped table-hover">
             <tr>
                 <th>Stock</th>
                 <th>Live Price</th>
             </tr>
 
-            <tr><td>INFY</td><td id="INFY">Loading...</td></tr>
-            <tr><td>RELIANCE</td><td id="RELIANCE">Loading...</td></tr>
-            <tr><td>TCS</td><td id="TCS">Loading...</td></tr>
-            <tr><td>HDFCBANK</td><td id="HDFCBANK">Loading...</td></tr>
+            {% for symbol in watchlist_symbols %}
+            <tr>
+                <td><b>{{ symbol }}</b></td>
+                <td id="{{ symbol }}">Loading...</td>
+            </tr>
+            {% endfor %}
         </table>
+
+        {% else %}
+
+        <div class="alert alert-warning">
+            No watchlist stocks found. Please add stocks from Watchlist Manager.
+        </div>
+
+        {% endif %}
+
     </div>
 </div>
 
 <script>
 async function loadLivePrices() {
-    const response = await fetch("/api/live-prices");
-    const data = await response.json();
+    try {
+        const response = await fetch("/api/live-prices");
+        const data = await response.json();
 
-    if (data.error) {
-        console.log(data.error);
-        return;
+        if (data.error) {
+            console.log("Live price error:", data.error);
+            return;
+        }
+
+        Object.keys(data).forEach(function(symbol) {
+            const cell = document.getElementById(symbol);
+
+            if (cell) {
+                cell.innerHTML = "₹" + data[symbol];
+            }
+        });
+
+    } catch (error) {
+        console.log("Live price fetch failed:", error);
     }
-
-    document.getElementById("INFY").innerHTML = "₹" + data.INFY;
-    document.getElementById("RELIANCE").innerHTML = "₹" + data.RELIANCE;
-    document.getElementById("TCS").innerHTML = "₹" + data.TCS;
-    document.getElementById("HDFCBANK").innerHTML = "₹" + data.HDFCBANK;
 }
 
 loadLivePrices();

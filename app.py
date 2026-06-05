@@ -1,12 +1,11 @@
 from flask import Flask, request, render_template, session, redirect, url_for, has_request_context
 from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO
-from kiteconnect import KiteConnect, KiteTicker
+from kiteconnect import KiteConnect
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 
 import os
-import threading
 import requests
 import pandas as pd
 import ta
@@ -157,6 +156,10 @@ def get_watchlist_symbols():
     return ["INFY", "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK"]
 
 
+def get_watchlist_quote_symbols():
+    return [f"NSE:{symbol}" for symbol in get_watchlist_symbols()]
+
+
 def send_telegram_alert(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return "Telegram not configured"
@@ -275,9 +278,11 @@ def calculate_trade_levels(entry_price, signal):
     if signal in ["BUY", "STRONG BUY"]:
         stop_loss = entry_price - (entry_price * STOP_LOSS_PERCENT / 100)
         target = entry_price + (entry_price * TARGET_PERCENT / 100)
+
     elif signal in ["SELL", "STRONG SELL"]:
         stop_loss = entry_price + (entry_price * STOP_LOSS_PERCENT / 100)
         target = entry_price - (entry_price * TARGET_PERCENT / 100)
+
     else:
         stop_loss = None
         target = None
@@ -710,7 +715,6 @@ def login():
     )
 
     access_token = data["access_token"]
-
     session["access_token"] = access_token
 
     db.session.add(TokenStore(access_token=access_token))
@@ -740,19 +744,21 @@ def market():
 
     set_kite_token()
 
-    symbols = ["NSE:INFY", "NSE:RELIANCE", "NSE:TCS", "NSE:HDFCBANK"]
+    symbols = get_watchlist_quote_symbols()[:4]
     quotes = kite.quote(symbols)
 
     df = get_historical_df()
     strategy = generate_ai_strategy(df)
 
-    live_quote = kite.quote(["NSE:INFY"])
-    live_price = live_quote["NSE:INFY"]["last_price"]
+    first_symbol = symbols[0]
+    live_quote = kite.quote([first_symbol])
+    live_price = live_quote[first_symbol]["last_price"]
 
     market_data = []
 
     for symbol in symbols:
         price = quotes[symbol]["last_price"]
+        clean_symbol = symbol.replace("NSE:", "")
 
         market_data.append({
             "symbol": symbol,
@@ -761,7 +767,7 @@ def market():
         })
 
         db.session.add(SignalLog(
-            symbol=symbol,
+            symbol=clean_symbol,
             price=price,
             signal=strategy["signal"],
             confidence=strategy["confidence"],
@@ -805,7 +811,7 @@ def market():
     ))
 
     fig.update_layout(
-        title=f"INFY AI Trading Chart - Live Price ₹{live_price}",
+        title=f"{first_symbol.replace('NSE:', '')} AI Trading Chart - Live Price ₹{live_price}",
         height=550
     )
 
@@ -1012,7 +1018,6 @@ def scanner():
         return redirect(url_for("login_page"))
 
     selected_symbols = request.args.getlist("symbols")
-
     min_confidence_filter = request.args.get("min_confidence", "")
 
     try:
@@ -1046,7 +1051,6 @@ def scanner_send_alerts():
         return redirect(url_for("login_page"))
 
     selected_symbols = request.args.getlist("symbols")
-
     min_confidence_filter = request.args.get("min_confidence", "")
 
     try:
@@ -1239,17 +1243,23 @@ def api_live_prices():
 
     set_kite_token()
 
-    symbols = ["NSE:INFY", "NSE:RELIANCE", "NSE:TCS", "NSE:HDFCBANK"]
+    watchlist_symbols = get_watchlist_symbols()
+
+    if not watchlist_symbols:
+        watchlist_symbols = ["INFY", "RELIANCE", "TCS", "HDFCBANK"]
+
+    quote_symbols = [f"NSE:{symbol}" for symbol in watchlist_symbols]
 
     try:
-        quotes = kite.quote(symbols)
+        quotes = kite.quote(quote_symbols)
 
-        return {
-            "INFY": quotes["NSE:INFY"]["last_price"],
-            "RELIANCE": quotes["NSE:RELIANCE"]["last_price"],
-            "TCS": quotes["NSE:TCS"]["last_price"],
-            "HDFCBANK": quotes["NSE:HDFCBANK"]["last_price"]
-        }
+        data = {}
+
+        for symbol in watchlist_symbols:
+            key = f"NSE:{symbol}"
+            data[symbol] = quotes[key]["last_price"]
+
+        return data
 
     except Exception as e:
         return {"error": str(e)}, 500
@@ -1260,7 +1270,12 @@ def realtime():
     if not is_logged_in():
         return redirect(url_for("login_page"))
 
-    return render_template("realtime.html")
+    watchlist_symbols = get_watchlist_symbols()
+
+    return render_template(
+        "realtime.html",
+        watchlist_symbols=watchlist_symbols
+    )
 
 
 @app.route("/start-stream")
