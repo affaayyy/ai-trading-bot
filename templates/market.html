@@ -2,47 +2,117 @@
 
 {% block content %}
 
-<div class="p-4 bg-dark text-white rounded-4 mb-4 shadow">
-    <h1>AI Signal Engine</h1>
-    <p class="lead">Live Zerodha Market Watch + AI Strategy Analysis</p>
+<h2 class="mb-4">Dynamic AI Technical Chart</h2>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-dark text-white">
+        Select Stock for AI Chart
+    </div>
+
+    <div class="card-body">
+
+        <form method="GET" action="/market">
+
+            <label class="form-label">
+                Select Watchlist Stock
+            </label>
+
+            <select name="symbol" class="form-select mb-3">
+
+                {% for symbol in watchlist_symbols %}
+
+                    <option value="{{ symbol }}"
+                        {% if symbol == selected_symbol %}
+                            selected
+                        {% endif %}
+                    >
+                        {{ symbol }}
+                    </option>
+
+                {% endfor %}
+
+            </select>
+
+            <button type="submit" class="btn btn-primary">
+                Analyze Stock
+            </button>
+
+            <a href="/watchlist" class="btn btn-secondary">
+                Manage Watchlist
+            </a>
+
+        </form>
+
+    </div>
 </div>
 
 <div class="row g-4 mb-4">
 
     <div class="col-md-3">
-        <div class="card shadow-sm p-4">
-            <h5>Latest RSI</h5>
-            <h2>{{ latest_rsi }}</h2>
+        <div class="card p-3 shadow-sm">
+            <h6>Selected Stock</h6>
+            <h3>{{ selected_symbol }}</h3>
         </div>
     </div>
 
     <div class="col-md-3">
-        <div class="card shadow-sm p-4">
-            <h5>AI Signal</h5>
+        <div class="card p-3 shadow-sm">
+            <h6>Current Price</h6>
+            <h3>₹{{ current_price }}</h3>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card p-3 shadow-sm">
+            <h6>Entry Price</h6>
+            <h3>₹{{ entry_price }}</h3>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card p-3 shadow-sm">
+            <h6>AI Signal</h6>
 
             {% if ai_signal == "BUY" or ai_signal == "STRONG BUY" %}
-                <h2 class="text-success">{{ ai_signal }}</h2>
-
+                <h3 class="text-success">{{ ai_signal }}</h3>
             {% elif ai_signal == "SELL" or ai_signal == "STRONG SELL" %}
-                <h2 class="text-danger">{{ ai_signal }}</h2>
-
+                <h3 class="text-danger">{{ ai_signal }}</h3>
             {% else %}
-                <h2 class="text-warning">{{ ai_signal }}</h2>
+                <h3 class="text-warning">{{ ai_signal }}</h3>
             {% endif %}
+
+        </div>
+    </div>
+
+</div>
+
+<div class="row g-4 mb-4">
+
+    <div class="col-md-3">
+        <div class="card p-3 shadow-sm">
+            <h6>Confidence</h6>
+            <h3>{{ confidence }}%</h3>
         </div>
     </div>
 
     <div class="col-md-3">
-        <div class="card shadow-sm p-4">
-            <h5>Confidence</h5>
-            <h2>{{ confidence }}%</h2>
+        <div class="card p-3 shadow-sm">
+            <h6>Score</h6>
+            <h3>{{ score }}</h3>
         </div>
     </div>
 
     <div class="col-md-3">
-        <div class="card shadow-sm p-4">
-            <h5>Strategy Score</h5>
-            <h2>{{ score }}</h2>
+        <div class="card p-3 shadow-sm">
+            <h6>Stop Loss</h6>
+            <h3>₹{{ stop_loss }}</h3>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card p-3 shadow-sm">
+            <h6>Target</h6>
+            <h3>₹{{ target }}</h3>
         </div>
     </div>
 
@@ -50,10 +120,61 @@
 
 <div class="card shadow-sm mb-4">
     <div class="card-header bg-dark text-white">
-        AI Strategy Reasons
+        AI Technical Chart - {{ selected_symbol }}
     </div>
 
     <div class="card-body">
+        {{ chart|safe }}
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-dark text-white">
+        AI Indicators
+    </div>
+
+    <div class="card-body">
+
+        <table class="table table-striped">
+
+            <tr>
+                <th>RSI</th>
+                <td>{{ latest_rsi }}</td>
+            </tr>
+
+            <tr>
+                <th>EMA20</th>
+                <td>{{ latest_ema20 }}</td>
+            </tr>
+
+            <tr>
+                <th>EMA50</th>
+                <td>{{ latest_ema50 }}</td>
+            </tr>
+
+            <tr>
+                <th>MACD</th>
+                <td>{{ macd }}</td>
+            </tr>
+
+            <tr>
+                <th>MACD Signal</th>
+                <td>{{ macd_signal }}</td>
+            </tr>
+
+        </table>
+
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-dark text-white">
+        AI Reasoning
+    </div>
+
+    <div class="card-body">
+
+        <p>{{ gpt_reasoning }}</p>
 
         <ul>
             {% for reason in reasons %}
@@ -64,23 +185,9 @@
     </div>
 </div>
 
-<div class="card shadow-sm mb-4">
-    <div class="card-header bg-primary text-white">
-        GPT AI Reasoning
-    </div>
-
-    <div class="card-body">
-        <p>{{ gpt_reasoning }}</p>
-    </div>
-</div>
-
-<div class="card shadow-sm mb-4">
-    <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
-        <span>Real-Time Market Watch</span>
-
-        <a href="/start-stream" class="btn btn-light btn-sm">
-            Start Live Stream
-        </a>
+<div class="card shadow-sm">
+    <div class="card-header bg-dark text-white">
+        Watchlist Market Prices
     </div>
 
     <div class="card-body">
@@ -89,50 +196,16 @@
 
             <tr>
                 <th>Stock</th>
-                <th>Live Price</th>
-                <th>Signal</th>
+                <th>Price</th>
                 <th>Status</th>
             </tr>
 
             {% for item in market_data %}
 
             <tr>
-
-                <td>
-                    {{ item.symbol }}
-                </td>
-
-                <td id="{{ item.symbol.split(':')[1] }}">
-                    {{ item.price }}
-                </td>
-
-                <td>
-
-                    {% if item.signal == "BUY" %}
-                        <span class="badge bg-success">
-                            BUY
-                        </span>
-
-                    {% elif item.signal == "SELL" %}
-                        <span class="badge bg-danger">
-                            SELL
-                        </span>
-
-                    {% else %}
-                        <span class="badge bg-warning text-dark">
-                            HOLD
-                        </span>
-
-                    {% endif %}
-
-                </td>
-
-                <td>
-                    <span class="text-success">
-                        LIVE
-                    </span>
-                </td>
-
+                <td>{{ item.symbol }}</td>
+                <td>₹{{ item.price }}</td>
+                <td>{{ item.signal }}</td>
             </tr>
 
             {% endfor %}
@@ -141,33 +214,5 @@
 
     </div>
 </div>
-
-<div class="card shadow-sm mb-4">
-    <div class="card-header bg-dark text-white">
-        AI Technical Chart
-    </div>
-
-    <div class="card-body">
-        {{ chart | safe }}
-    </div>
-</div>
-
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-
-<script>
-
-    const socket = io();
-
-    socket.on("price_update", function(data) {
-
-        const cell = document.getElementById(data.symbol);
-
-        if (cell) {
-            cell.innerText = data.price;
-        }
-
-    });
-
-</script>
 
 {% endblock %}

@@ -18,17 +18,14 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "fallback_secret_key")
-
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 database_url = os.getenv("DATABASE_URL", "sqlite:///local.db")
-
 if database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
 db = SQLAlchemy(app)
 
 api_key = os.getenv("KITE_API_KEY")
@@ -126,11 +123,7 @@ def get_latest_access_token():
         return session["access_token"]
 
     latest_token = TokenStore.query.order_by(TokenStore.created_at.desc()).first()
-
-    if latest_token:
-        return latest_token.access_token
-
-    return None
+    return latest_token.access_token if latest_token else None
 
 
 def is_logged_in():
@@ -139,25 +132,17 @@ def is_logged_in():
 
 def set_kite_token():
     token = get_latest_access_token()
-
     if token:
         kite.set_access_token(token)
         return True
-
     return False
 
 
 def get_watchlist_symbols():
     stocks = WatchlistStock.query.order_by(WatchlistStock.created_at.desc()).all()
-
     if stocks:
         return [stock.symbol for stock in stocks]
-
     return ["INFY", "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK"]
-
-
-def get_watchlist_quote_symbols():
-    return [f"NSE:{symbol}" for symbol in get_watchlist_symbols()]
 
 
 def send_telegram_alert(message):
@@ -203,7 +188,6 @@ def generate_ai_strategy(df):
     df["macd_signal"] = macd.macd_signal()
 
     latest = df.iloc[-1]
-
     score = 0
     reasons = []
 
@@ -278,11 +262,9 @@ def calculate_trade_levels(entry_price, signal):
     if signal in ["BUY", "STRONG BUY"]:
         stop_loss = entry_price - (entry_price * STOP_LOSS_PERCENT / 100)
         target = entry_price + (entry_price * TARGET_PERCENT / 100)
-
     elif signal in ["SELL", "STRONG SELL"]:
         stop_loss = entry_price + (entry_price * STOP_LOSS_PERCENT / 100)
         target = entry_price - (entry_price * TARGET_PERCENT / 100)
-
     else:
         stop_loss = None
         target = None
@@ -410,7 +392,6 @@ def calculate_portfolio_analytics(holdings):
         })
 
     pnl_percent = 0
-
     if total_invested > 0:
         pnl_percent = (total_pnl / total_invested) * 100
 
@@ -585,23 +566,13 @@ def run_backtest_v2(df, initial_capital=100000):
             "equity": round(current_equity, 2)
         })
 
-        buy_signal = (
-            row["rsi"] < 35 and
-            row["ema20"] > row["ema50"] and
-            position == 0
-        )
-
-        sell_signal = (
-            row["rsi"] > 65 and
-            position > 0
-        )
-
+        buy_signal = row["rsi"] < 35 and row["ema20"] > row["ema50"] and position == 0
+        sell_signal = row["rsi"] > 65 and position > 0
         stop_loss_hit = position > 0 and price <= entry_price * 0.99
         target_hit = position > 0 and price >= entry_price * 1.02
 
         if buy_signal:
             quantity = int(capital // price)
-
             if quantity > 0:
                 position = quantity
                 entry_price = price
@@ -621,7 +592,6 @@ def run_backtest_v2(df, initial_capital=100000):
             pnl = (price - entry_price) * position
 
             reason = "AI SELL Signal"
-
             if stop_loss_hit:
                 reason = "Stop Loss Hit"
             elif target_hit:
@@ -647,7 +617,6 @@ def run_backtest_v2(df, initial_capital=100000):
     winning_trades = [t for t in sell_trades if t["pnl"] > 0]
 
     win_rate = 0
-
     if sell_trades:
         win_rate = (len(winning_trades) / len(sell_trades)) * 100
 
@@ -744,37 +713,50 @@ def market():
 
     set_kite_token()
 
-    symbols = get_watchlist_quote_symbols()[:4]
-    quotes = kite.quote(symbols)
+    watchlist_symbols = get_watchlist_symbols()
+    selected_symbol = request.args.get("symbol", watchlist_symbols[0] if watchlist_symbols else "INFY").upper()
 
-    df = get_historical_df()
+    if selected_symbol not in STOCK_UNIVERSE:
+        selected_symbol = "INFY"
+
+    selected_token = STOCK_UNIVERSE[selected_symbol]
+
+    df = get_historical_df(selected_token)
     strategy = generate_ai_strategy(df)
 
-    first_symbol = symbols[0]
-    live_quote = kite.quote([first_symbol])
-    live_price = live_quote[first_symbol]["last_price"]
+    entry_price = round(df.iloc[-1]["close"], 2)
+    live_price = round(get_live_price(selected_symbol, entry_price), 2)
+    levels = calculate_trade_levels(entry_price, strategy["signal"])
+
+    quote_symbols = [f"NSE:{symbol}" for symbol in watchlist_symbols[:8]]
 
     market_data = []
 
-    for symbol in symbols:
-        price = quotes[symbol]["last_price"]
-        clean_symbol = symbol.replace("NSE:", "")
+    try:
+        quotes = kite.quote(quote_symbols)
 
-        market_data.append({
-            "symbol": symbol,
-            "price": price,
-            "signal": "HOLD" if price > 1000 else "WATCH"
-        })
+        for symbol in watchlist_symbols[:8]:
+            key = f"NSE:{symbol}"
+            price = quotes[key]["last_price"]
 
-        db.session.add(SignalLog(
-            symbol=clean_symbol,
-            price=price,
-            signal=strategy["signal"],
-            confidence=strategy["confidence"],
-            score=strategy["score"]
-        ))
+            market_data.append({
+                "symbol": symbol,
+                "price": price,
+                "signal": "HOLD" if price > 1000 else "WATCH"
+            })
 
-    db.session.commit()
+            db.session.add(SignalLog(
+                symbol=symbol,
+                price=price,
+                signal=strategy["signal"],
+                confidence=strategy["confidence"],
+                score=strategy["score"]
+            ))
+
+        db.session.commit()
+
+    except Exception:
+        pass
 
     fig = go.Figure()
 
@@ -811,7 +793,7 @@ def market():
     ))
 
     fig.update_layout(
-        title=f"{first_symbol.replace('NSE:', '')} AI Trading Chart - Live Price ₹{live_price}",
+        title=f"{selected_symbol} AI Trading Chart - Live Price ₹{live_price}",
         height=550
     )
 
@@ -819,6 +801,8 @@ def market():
 
     return render_template(
         "market.html",
+        watchlist_symbols=watchlist_symbols,
+        selected_symbol=selected_symbol,
         latest_rsi=strategy["rsi"],
         latest_ema20=strategy["ema20"],
         latest_ema50=strategy["ema50"],
@@ -828,6 +812,10 @@ def market():
         confidence=strategy["confidence"],
         score=strategy["score"],
         reasons=strategy["reasons"],
+        current_price=live_price,
+        entry_price=entry_price,
+        stop_loss=levels["stop_loss"],
+        target=levels["target"],
         gpt_reasoning="AI signal generated using RSI, EMA20, EMA50, MACD, and Bollinger Bands.",
         market_data=market_data,
         chart=chart
@@ -1244,15 +1232,10 @@ def api_live_prices():
     set_kite_token()
 
     watchlist_symbols = get_watchlist_symbols()
-
-    if not watchlist_symbols:
-        watchlist_symbols = ["INFY", "RELIANCE", "TCS", "HDFCBANK"]
-
     quote_symbols = [f"NSE:{symbol}" for symbol in watchlist_symbols]
 
     try:
         quotes = kite.quote(quote_symbols)
-
         data = {}
 
         for symbol in watchlist_symbols:
