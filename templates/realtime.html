@@ -4,9 +4,9 @@
 
 <h2 class="mb-4">Real-Time Live Market Dashboard</h2>
 
-<a href="/start-stream" class="btn btn-success mb-4">
-    Start Live Stream
-</a>
+<div class="alert alert-success">
+    Live prices auto-refresh every 5 seconds.
+</div>
 
 <div class="card shadow-sm">
     <div class="card-header bg-dark text-white">
@@ -20,41 +20,32 @@
                 <th>Live Price</th>
             </tr>
 
-            <tr>
-                <td>INFY</td>
-                <td id="INFY">Waiting...</td>
-            </tr>
-
-            <tr>
-                <td>RELIANCE</td>
-                <td id="RELIANCE">Waiting...</td>
-            </tr>
-
-            <tr>
-                <td>TCS</td>
-                <td id="TCS">Waiting...</td>
-            </tr>
-
-            <tr>
-                <td>HDFCBANK</td>
-                <td id="HDFCBANK">Waiting...</td>
-            </tr>
+            <tr><td>INFY</td><td id="INFY">Loading...</td></tr>
+            <tr><td>RELIANCE</td><td id="RELIANCE">Loading...</td></tr>
+            <tr><td>TCS</td><td id="TCS">Loading...</td></tr>
+            <tr><td>HDFCBANK</td><td id="HDFCBANK">Loading...</td></tr>
         </table>
     </div>
 </div>
 
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-
 <script>
-    const socket = io();
+async function loadLivePrices() {
+    const response = await fetch("/api/live-prices");
+    const data = await response.json();
 
-    socket.on("price_update", function(data) {
-        const cell = document.getElementById(data.symbol);
+    if (data.error) {
+        console.log(data.error);
+        return;
+    }
 
-        if (cell) {
-            cell.innerHTML = "₹" + data.price;
-        }
-    });
+    document.getElementById("INFY").innerHTML = "₹" + data.INFY;
+    document.getElementById("RELIANCE").innerHTML = "₹" + data.RELIANCE;
+    document.getElementById("TCS").innerHTML = "₹" + data.TCS;
+    document.getElementById("HDFCBANK").innerHTML = "₹" + data.HDFCBANK;
+}
+
+loadLivePrices();
+setInterval(loadLivePrices, 5000);
 </script>
 
 {% endblock %}

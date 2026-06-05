@@ -1164,27 +1164,28 @@ def start_kite_stream():
 
 @app.route("/start-stream")
 def start_stream():
-    if not is_logged_in():
-        return redirect(url_for("login_page"))
-
-    thread = threading.Thread(target=start_kite_stream)
-    thread.daemon = True
-    thread.start()
-
     return redirect(url_for("realtime"))
 
+@app.route("/api/live-prices")
+def api_live_prices():
+    if not is_logged_in():
+        return {"error": "not_logged_in"}, 401
 
-scheduler = BackgroundScheduler()
+    set_kite_token()
 
-if SCHEDULER_ENABLED:
-    scheduler.add_job(
-        autonomous_scan_job,
-        "interval",
-        minutes=SCAN_INTERVAL_MINUTES,
-    )
+    try:
+        symbols = ["NSE:INFY", "NSE:RELIANCE", "NSE:TCS", "NSE:HDFCBANK"]
+        quotes = kite.quote(symbols)
 
-    scheduler.start()
+        return {
+            "INFY": quotes["NSE:INFY"]["last_price"],
+            "RELIANCE": quotes["NSE:RELIANCE"]["last_price"],
+            "TCS": quotes["NSE:TCS"]["last_price"],
+            "HDFCBANK": quotes["NSE:HDFCBANK"]["last_price"]
+        }
 
+    except Exception as e:
+        return {"error": str(e)}, 500
 
 if __name__ == "__main__":
     socketio.run(
