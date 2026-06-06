@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2 class="mb-4">Phase 24/25 AI Confirmation Engine</h2>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-dark text-white">Select Stock</div>
+    <div class="card-body">
+        <form method="GET" action="/ai-confirmation">
+            <select name="symbol" class="form-select mb-3">
+                {% for symbol in watchlist_symbols %}
+                    <option value="{{ symbol }}" {% if symbol == selected_symbol %}selected{% endif %}>{{ symbol }}</option>
+                {% endfor %}
+            </select>
+            <button class="btn btn-primary" type="submit">Run Confirmation</button>
+            <a href="/market?symbol={{ selected_symbol }}" class="btn btn-secondary">Open Market Chart</a>
+        </form>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-md-4">
+        <div class="card p-3 shadow-sm">
+            <h6>Selected Stock</h6>
+            <h3>{{ selected_symbol }}</h3>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card p-3 shadow-sm">
+            <h6>MTF Overall Signal</h6>
+            <h3>{{ mtf_summary.overall_signal }}</h3>
+            <p>{{ mtf_summary.summary }}</p>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card p-3 shadow-sm">
+            <h6>Candlestick Bias</h6>
+            <h3>{{ candlestick.overall_bias }}</h3>
+            <p>{{ candlestick.summary }}</p>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-dark text-white">Multi-Timeframe Matrix</div>
+    <div class="card-body">
+        <table class="table table-striped table-hover">
+            <tr><th>Timeframe</th><th>Signal</th><th>Confidence</th><th>Score</th><th>RSI</th><th>EMA20</th><th>EMA50</th><th>MACD</th><th>Reason</th></tr>
+            {% for item in timeframe_results %}
+            <tr>
+                <td>{{ item.timeframe }}</td>
+                <td>{{ item.signal }}</td>
+                <td>{{ item.confidence }}%</td>
+                <td>{{ item.score }}</td>
+                <td>{{ item.rsi }}</td>
+                <td>{{ item.ema20 }}</td>
+                <td>{{ item.ema50 }}</td>
+                <td>{{ item.macd }}</td>
+                <td>{{ item.reason }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-header bg-dark text-white">Candlestick Patterns</div>
+    <div class="card-body">
+        {% if candlestick.patterns %}
+            <table class="table table-striped table-hover">
+                <tr><th>Pattern</th><th>Bias</th><th>Confidence</th><th>Reason</th></tr>
+                {% for pattern in candlestick.patterns %}
+                <tr>
+                    <td>{{ pattern.name }}</td>
+                    <td>{{ pattern.bias }}</td>
+                    <td>{{ pattern.confidence }}%</td>
+                    <td>{{ pattern.reason }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+        {% else %}
+            <div class="alert alert-warning">No strong candlestick pattern found for the latest candles.</div>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}

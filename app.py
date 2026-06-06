@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, session, redirect, url_for, has_request_context
+from flask import Flask, request, render_template, render_template_string, session, redirect, url_for, has_request_context
 from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO
 from kiteconnect import KiteConnect
@@ -89,6 +89,40 @@ STOCK_UNIVERSE = {
 }
 
 
+# Phase 26: Sector Rotation AI mapping
+SECTOR_MAP = {
+    "INFY": "IT",
+    "TCS": "IT",
+    "HCLTECH": "IT",
+    "WIPRO": "IT",
+    "TECHM": "IT",
+    "RELIANCE": "Energy",
+    "ONGC": "Energy",
+    "COALINDIA": "Energy",
+    "HDFCBANK": "Banking",
+    "ICICIBANK": "Banking",
+    "SBIN": "Banking",
+    "AXISBANK": "Banking",
+    "KOTAKBANK": "Banking",
+    "LT": "Infrastructure",
+    "POWERGRID": "Infrastructure",
+    "NTPC": "Infrastructure",
+    "ITC": "FMCG",
+    "HINDUNILVR": "FMCG",
+    "NESTLEIND": "FMCG",
+    "MARUTI": "Auto",
+    "TITAN": "Consumer",
+    "ASIANPAINT": "Consumer",
+    "BAJFINANCE": "Finance",
+    "SUNPHARMA": "Pharma",
+    "CIPLA": "Pharma",
+    "TATASTEEL": "Metals",
+    "JSWSTEEL": "Metals",
+    "HINDALCO": "Metals",
+    "ULTRACEMCO": "Cement",
+}
+
+
 class SignalLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     symbol = db.Column(db.String(50))
@@ -153,7 +187,10 @@ def get_latest_access_token():
 
 
 def is_logged_in():
-    return get_latest_access_token() is not None
+    if has_request_context() and "access_token" in session:
+        return True
+
+        return get_latest_access_token() is not None
 
 
 def set_kite_token():
@@ -192,7 +229,8 @@ def get_historical_df(instrument_token=408065):
     return pd.DataFrame(data)
 
 
-def generate_ai_strategy(df):
+def prepare_indicator_df(df):
+    """Add reusable technical indicators needed by market chart, scanner, and AI engines."""
     df = df.copy()
     df["rsi"] = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi()
     df["ema20"] = df["close"].ewm(span=20).mean()
@@ -201,6 +239,12 @@ def generate_ai_strategy(df):
     macd = ta.trend.MACD(close=df["close"])
     df["macd"] = macd.macd()
     df["macd_signal"] = macd.macd_signal()
+
+    return df
+
+
+def generate_ai_strategy(df):
+    df = prepare_indicator_df(df)
 
     latest = df.iloc[-1]
     score = 0
@@ -754,6 +798,126 @@ def run_backtest_v2(df, initial_capital=100000):
     return {"initial_capital": initial_capital, "final_value": round(final_value, 2), "total_pnl": round(total_pnl, 2), "roi": round(roi, 2), "total_trades": len(trades), "win_rate": round(win_rate, 2), "max_drawdown": round(max_drawdown, 2), "trades": trades, "equity_curve": equity_curve}
 
 
+def get_sector_rotation_data(symbols=None):
+    """Phase 26: Rank sectors using watchlist/stock universe momentum and AI signal strength."""
+    set_kite_token()
+
+    symbols_to_scan = symbols if symbols else list(STOCK_UNIVERSE.keys())
+    sector_bucket = {}
+
+    for symbol in symbols_to_scan:
+        if symbol not in STOCK_UNIVERSE:
+            continue
+
+        sector = SECTOR_MAP.get(symbol, "Others")
+
+        try:
+            df = prepare_indicator_df(get_historical_df(STOCK_UNIVERSE[symbol]))
+
+            if df.empty or len(df) < 30:
+                continue
+
+            strategy = generate_ai_strategy(df)
+            latest_close = float(df.iloc[-1]["close"])
+            close_5d = float(df.iloc[-6]["close"]) if len(df) > 6 else latest_close
+            close_20d = float(df.iloc[-21]["close"]) if len(df) > 21 else latest_close
+
+            momentum_5d = ((latest_close - close_5d) / close_5d) * 100 if close_5d else 0
+            momentum_20d = ((latest_close - close_20d) / close_20d) * 100 if close_20d else 0
+
+            signal_bias = 0
+            if strategy["signal"] in ["BUY", "STRONG BUY"]:
+                signal_bias = strategy["confidence"]
+            elif strategy["signal"] in ["SELL", "STRONG SELL"]:
+                signal_bias = -strategy["confidence"]
+            else:
+                signal_bias = 0
+
+            composite_score = round((momentum_5d * 2) + momentum_20d + (signal_bias / 10), 2)
+
+            row = {
+                "symbol": symbol,
+                "sector": sector,
+                "price": round(latest_close, 2),
+                "signal": strategy["signal"],
+                "confidence": strategy["confidence"],
+                "score": strategy["score"],
+                "rsi": strategy["rsi"],
+                "momentum_5d": round(momentum_5d, 2),
+                "momentum_20d": round(momentum_20d, 2),
+                "composite_score": composite_score,
+            }
+
+            sector_bucket.setdefault(sector, []).append(row)
+
+        except Exception as e:
+            sector_bucket.setdefault(sector, []).append({
+                "symbol": symbol,
+                "sector": sector,
+                "price": "Error",
+                "signal": "ERROR",
+                "confidence": 0,
+                "score": 0,
+                "rsi": "-",
+                "momentum_5d": 0,
+                "momentum_20d": 0,
+                "composite_score": 0,
+                "error": str(e),
+            })
+
+    sectors = []
+
+    for sector, stocks in sector_bucket.items():
+        valid = [x for x in stocks if isinstance(x.get("composite_score"), (int, float))]
+        avg_score = round(sum(x["composite_score"] for x in valid) / len(valid), 2) if valid else 0
+        avg_confidence = round(sum(x.get("confidence", 0) for x in valid) / len(valid), 2) if valid else 0
+        bullish_count = len([x for x in valid if x.get("signal") in ["BUY", "STRONG BUY"]])
+        bearish_count = len([x for x in valid if x.get("signal") in ["SELL", "STRONG SELL"]])
+
+        if avg_score >= 12:
+            rotation_signal = "STRONG ROTATION IN"
+        elif avg_score >= 5:
+            rotation_signal = "ROTATION IN"
+        elif avg_score <= -12:
+            rotation_signal = "STRONG ROTATION OUT"
+        elif avg_score <= -5:
+            rotation_signal = "ROTATION OUT"
+        else:
+            rotation_signal = "NEUTRAL"
+
+        sectors.append({
+            "sector": sector,
+            "avg_score": avg_score,
+            "avg_confidence": avg_confidence,
+            "bullish_count": bullish_count,
+            "bearish_count": bearish_count,
+            "stock_count": len(stocks),
+            "rotation_signal": rotation_signal,
+            "stocks": sorted(stocks, key=lambda x: x.get("composite_score", 0), reverse=True),
+        })
+
+    return sorted(sectors, key=lambda x: x["avg_score"], reverse=True)
+
+
+def get_top_sector_opportunities(limit=5):
+    sectors = get_sector_rotation_data(get_watchlist_symbols())
+    opportunities = []
+
+    for sector in sectors:
+        for stock in sector["stocks"]:
+            stock["sector_rank_score"] = sector["avg_score"]
+            stock["rotation_signal"] = sector["rotation_signal"]
+            opportunities.append(stock)
+
+    opportunities = sorted(
+        opportunities,
+        key=lambda x: (x.get("sector_rank_score", 0), x.get("composite_score", 0), x.get("confidence", 0)),
+        reverse=True,
+    )
+
+    return opportunities[:limit]
+
+
 def autonomous_scan_job():
     with app.app_context():
         try:
@@ -801,6 +965,13 @@ def login():
 @app.route("/logout")
 def logout():
     session.clear()
+
+    try:
+        TokenStore.query.delete()
+        db.session.commit()
+    except Exception as e:
+        print("Logout token clear error:", str(e), flush=True)
+
     return redirect(url_for("login_page"))
 
 
@@ -820,7 +991,7 @@ def market():
     selected_symbol = request.args.get("symbol", watchlist_symbols[0] if watchlist_symbols else "INFY").upper()
     if selected_symbol not in STOCK_UNIVERSE:
         selected_symbol = "INFY"
-    df = get_historical_df(STOCK_UNIVERSE[selected_symbol])
+    df = prepare_indicator_df(get_historical_df(STOCK_UNIVERSE[selected_symbol]))
     strategy = generate_ai_strategy(df)
     entry_price = round(df.iloc[-1]["close"], 2)
     live_price = round(get_live_price(selected_symbol, entry_price), 2)
@@ -1130,6 +1301,103 @@ Max Position Value: {snapshot['max_position_value_percent']}%
 """
 
     return render_template("scanner_trade_result.html", message=message)
+
+@app.route("/sector-rotation")
+def sector_rotation():
+    if not is_logged_in():
+        return redirect(url_for("login_page"))
+
+    use_watchlist = request.args.get("scope", "watchlist") == "watchlist"
+    symbols = get_watchlist_symbols() if use_watchlist else list(STOCK_UNIVERSE.keys())
+    sectors = get_sector_rotation_data(symbols)
+    top_opportunities = get_top_sector_opportunities(limit=5)
+
+    return render_template_string("""
+{% extends "base.html" %}
+{% block content %}
+<h2 class="mb-4">AI Sector Rotation Dashboard</h2>
+
+<div class="alert alert-info">
+    Phase 26 active: sectors are ranked using 5-day momentum, 20-day momentum, AI signal confidence, RSI, EMA and MACD alignment.
+</div>
+
+<div class="mb-3">
+    <a href="/sector-rotation?scope=watchlist" class="btn btn-primary">Watchlist Sectors</a>
+    <a href="/sector-rotation?scope=all" class="btn btn-secondary">All Universe</a>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-dark text-white">Top Sector Opportunities</div>
+    <div class="card-body">
+        <table class="table table-striped table-hover">
+            <tr>
+                <th>Stock</th>
+                <th>Sector</th>
+                <th>Price</th>
+                <th>Signal</th>
+                <th>Confidence</th>
+                <th>5D %</th>
+                <th>20D %</th>
+                <th>Sector Score</th>
+            </tr>
+            {% for item in top_opportunities %}
+            <tr>
+                <td><b>{{ item.symbol }}</b></td>
+                <td>{{ item.sector }}</td>
+                <td>₹{{ item.price }}</td>
+                <td>{{ item.signal }}</td>
+                <td>{{ item.confidence }}%</td>
+                <td>{{ item.momentum_5d }}%</td>
+                <td>{{ item.momentum_20d }}%</td>
+                <td>{{ item.sector_rank_score }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-header bg-dark text-white">Sector Rotation Ranking</div>
+    <div class="card-body">
+        <table class="table table-striped table-hover">
+            <tr>
+                <th>Rank</th>
+                <th>Sector</th>
+                <th>Rotation Signal</th>
+                <th>Avg Score</th>
+                <th>Avg Confidence</th>
+                <th>Bullish</th>
+                <th>Bearish</th>
+                <th>Stocks</th>
+            </tr>
+            {% for sector in sectors %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><b>{{ sector.sector }}</b></td>
+                <td>{{ sector.rotation_signal }}</td>
+                <td>{{ sector.avg_score }}</td>
+                <td>{{ sector.avg_confidence }}%</td>
+                <td>{{ sector.bullish_count }}</td>
+                <td>{{ sector.bearish_count }}</td>
+                <td>{{ sector.stock_count }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+{% endblock %}
+""", sectors=sectors, top_opportunities=top_opportunities)
+
+
+@app.route("/api/sector-rotation")
+def api_sector_rotation():
+    if not is_logged_in():
+        return {"error": "not_logged_in"}, 401
+
+    use_watchlist = request.args.get("scope", "watchlist") == "watchlist"
+    symbols = get_watchlist_symbols() if use_watchlist else list(STOCK_UNIVERSE.keys())
+    return {"sectors": get_sector_rotation_data(symbols)}
+
 
 @app.route("/send-alert")
 def send_alert():
