@@ -171,7 +171,7 @@ class WatchlistStock(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     symbol = db.Column(db.String(50), unique=True, nullable=False)
     instrument_token = db.Column(db.Integer, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_aAt = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 with app.app_context():
@@ -1407,6 +1407,60 @@ def send_alert():
     alert_count = send_scanner_alerts(results)
     return f"High-confidence Telegram Alerts Sent: {alert_count}"
 
+@app.route("/ai-confirmation")
+def ai_confirmation():
+    if not is_logged_in():
+        return redirect(url_for("login_page"))
+
+    set_kite_token()
+
+    watchlist_symbols = get_watchlist_symbols()
+    selected_symbol = request.args.get(
+        "symbol",
+        watchlist_symbols[0] if watchlist_symbols else "INFY"
+    ).upper()
+
+    if selected_symbol not in STOCK_UNIVERSE:
+        selected_symbol = "INFY"
+
+    return render_template(
+        "ai_confirmation.html",
+        watchlist_symbols=watchlist_symbols,
+        selected_symbol=selected_symbol
+    )
+
+
+@app.route("/api/ai-confirmation/<symbol>")
+def api_ai_confirmation(symbol):
+    if not is_logged_in():
+        return {"error": "not_logged_in"}, 401
+
+    set_kite_token()
+
+    symbol = symbol.upper()
+
+    if symbol not in STOCK_UNIVERSE:
+        return {"error": "Invalid stock"}, 400
+
+    try:
+        df = get_historical_df(STOCK_UNIVERSE[symbol])
+        strategy = generate_ai_strategy(df)
+
+        return {
+            "symbol": symbol,
+            "signal": strategy["signal"],
+            "confidence": strategy["confidence"],
+            "score": strategy["score"],
+            "rsi": strategy["rsi"],
+            "ema20": strategy["ema20"],
+            "ema50": strategy["ema50"],
+            "macd": strategy["macd"],
+            "macd_signal": strategy["macd_signal"],
+            "reasons": strategy["reasons"]
+        }
+
+    except Exception as e:
+        return {"error": str(e)}, 500
 
 @app.route("/run-scheduler-now")
 def run_scheduler_now():
