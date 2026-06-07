@@ -4,7 +4,7 @@ from flask_socketio import SocketIO
 from kiteconnect import KiteConnect
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
-
+from sqlalchemy import text
 import os
 import requests
 import pandas as pd
@@ -202,9 +202,15 @@ def set_kite_token():
 
 
 def get_watchlist_symbols():
-    stocks = WatchlistStock.query.order_by(WatchlistStock.created_at.desc()).all()
-    if stocks:
-        return [stock.symbol for stock in stocks]
+    try:
+        stocks = WatchlistStock.query.order_by(WatchlistStock.id.desc()).all()
+
+        if stocks:
+            return [stock.symbol for stock in stocks]
+
+    except Exception as e:
+        print("Watchlist load error:", str(e), flush=True)
+
     return ["INFY", "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK"]
 
 
@@ -1489,7 +1495,9 @@ def watchlist():
                 db.session.add(WatchlistStock(symbol=symbol, instrument_token=STOCK_UNIVERSE[symbol]))
                 db.session.commit()
                 message = f"{symbol} added to watchlist successfully."
-    watchlist_stocks = WatchlistStock.query.order_by(WatchlistStock.created_at.desc()).all()
+    watchlist_stocks = WatchlistStock.query.order_by(
+    WatchlistStock.id.desc()
+).all()
     return render_template("watchlist.html", stock_universe=STOCK_UNIVERSE, watchlist_stocks=watchlist_stocks, message=message)
 
 
@@ -1534,6 +1542,17 @@ def realtime():
 def start_stream():
     return redirect(url_for("realtime"))
 
+@app.route("/fix-db")
+def fix_db():
+    try:
+        db.session.execute(text(
+            "ALTER TABLE watchlist_stock ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+        ))
+        db.session.commit()
+        return "Database fixed successfully."
+    except Exception as e:
+        db.session.rollback()
+        return f"DB fix result: {str(e)}"
 
 scheduler = BackgroundScheduler()
 
