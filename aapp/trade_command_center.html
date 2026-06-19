@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="mb-4">AI Trade Command Center</h2>
+
+<div class="alert alert-info">
+    Auto-scans enabled engines and ranks the best trade with entry, stop loss, target, exit plan, quantity and execution status.
+</div>
+
+<form method="GET" action="/trade-command-center" class="card card-body shadow-sm mb-4">
+    <div class="row g-3">
+        <div class="col-md-3">
+            <label class="form-label">Scope</label>
+            <select name="scope" class="form-select">
+                <option value="all" {% if data.scope == 'all' %}selected{% endif %}>All Stocks</option>
+                <option value="watchlist" {% if data.scope == 'watchlist' %}selected{% endif %}>Watchlist</option>
+            </select>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">AI Engines</label><br>
+            <label class="me-3"><input type="checkbox" name="modes" value="equity" {% if 'equity' in data.modes %}checked{% endif %}> Equity</label>
+            <label class="me-3"><input type="checkbox" name="modes" value="swing" {% if 'swing' in data.modes %}checked{% endif %}> Swing</label>
+            <label class="me-3"><input type="checkbox" name="modes" value="scalping" {% if 'scalping' in data.modes %}checked{% endif %}> Intraday</label>
+        </div>
+        <div class="col-md-3 d-flex align-items-end">
+            <button class="btn btn-primary w-100">Find Best Trade</button>
+        </div>
+    </div>
+</form>
+
+{% if data.best_trade %}
+<div class="card shadow-sm mb-4 border-success">
+    <div class="card-header bg-success text-white">
+        Best Trade Now — {{ data.best_trade.decision }}
+    </div>
+    <div class="card-body">
+        <div class="row g-4 mb-3">
+            <div class="col-md-3"><div class="card p-3"><h6>Stock</h6><h2>{{ data.best_trade.symbol }}</h2></div></div>
+            <div class="col-md-3"><div class="card p-3"><h6>Trade Type</h6><h4>{{ data.best_trade.trade_type }}</h4></div></div>
+            <div class="col-md-3"><div class="card p-3"><h6>Signal</h6><h4>{{ data.best_trade.signal }}</h4></div></div>
+            <div class="col-md-3"><div class="card p-3"><h6>Confidence</h6><h2>{{ data.best_trade.confidence }}%</h2></div></div>
+        </div>
+
+        <table class="table table-striped">
+            <tr><th>Current Price</th><td>₹{{ data.best_trade.current_price }}</td></tr>
+            <tr><th>Entry Price</th><td><b>₹{{ data.best_trade.entry_price }}</b></td></tr>
+            <tr><th>Stop Loss</th><td class="text-danger"><b>₹{{ data.best_trade.stop_loss }}</b></td></tr>
+            <tr><th>Target</th><td class="text-success"><b>₹{{ data.best_trade.target }}</b></td></tr>
+            <tr><th>Quantity</th><td>{{ data.best_trade.quantity }}</td></tr>
+            <tr><th>Risk Amount</th><td>₹{{ data.best_trade.risk_amount }}</td></tr>
+            <tr><th>Expected Reward</th><td>₹{{ data.best_trade.expected_reward }}</td></tr>
+            <tr><th>Risk Reward</th><td>1 : {{ data.best_trade.reward_risk }}</td></tr>
+            <tr><th>Final AI Rank Score</th><td>{{ data.best_trade.final_rank_score }}</td></tr>
+            <tr><th>Auto Trade Enabled</th><td>{{ data.auto_trade_enabled }}</td></tr>
+        </table>
+
+        <div class="row g-3 mb-3">
+            <div class="col-md-6">
+                <div class="card p-3 h-100">
+                    <h5>Why this trade?</h5>
+                    <ul>{% for reason in data.best_trade.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>
+                    <p><b>Sector:</b> {{ data.best_trade.sector_signal }} | Score: {{ data.best_trade.sector_score }}</p>
+                    <p><b>News:</b> {{ data.best_trade.news_summary }}</p>
+                    <p><b>Risk Firewall:</b> {{ data.best_trade.risk_status }}</p>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card p-3 h-100">
+                    <h5>When to enter / exit</h5>
+                    <p><b>Entry:</b> {{ data.best_trade.exit_plan.entry_rule }}</p>
+                    <p><b>Stop:</b> {{ data.best_trade.exit_plan.stop_rule }}</p>
+                    <p><b>Target:</b> {{ data.best_trade.exit_plan.target_rule }}</p>
+                    <p><b>Invalidation:</b> {{ data.best_trade.exit_plan.invalid_rule }}</p>
+                </div>
+            </div>
+        </div>
+
+        <a href="/execute-best-trade?mode=paper&scope={{ data.scope }}{% for m in data.modes %}&modes={{ m }}{% endfor %}" class="btn btn-warning">Save as Paper Trade</a>
+        <a href="/execute-best-trade?mode=live&scope={{ data.scope }}{% for m in data.modes %}&modes={{ m }}{% endfor %}" class="btn btn-danger">Execute Best Trade</a>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-warning">No trade candidate found. Check Zerodha login/token and market data.</div>
+{% endif %}
+
+<div class="card shadow-sm">
+    <div class="card-header bg-dark text-white">Ranked Trade Opportunities</div>
+    <div class="card-body table-responsive">
+        <table class="table table-striped table-hover">
+            <tr>
+                <th>Rank</th><th>Stock</th><th>Type</th><th>Signal</th><th>Conf</th><th>Entry</th><th>SL</th><th>Target</th><th>RR</th><th>Qty</th><th>Action</th><th>Rank Score</th>
+            </tr>
+            {% for item in data.candidates %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><b>{{ item.symbol }}</b></td>
+                <td>{{ item.trade_type }}</td>
+                <td>{{ item.signal }}</td>
+                <td>{{ item.confidence }}%</td>
+                <td>₹{{ item.entry_price }}</td>
+                <td>₹{{ item.stop_loss }}</td>
+                <td>₹{{ item.target }}</td>
+                <td>{{ item.reward_risk }}</td>
+                <td>{{ item.quantity }}</td>
+                <td>{{ item.action }}</td>
+                <td>{{ item.final_rank_score }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+{% endblock %}
